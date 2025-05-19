@@ -102,20 +102,63 @@
                 图为哈尔滨工业大学科学园最懒的大肥猫嘟嘟，天天不是吃就是睡，要么就是喵喵叫。
             </p>
         </div>
-
-        <!-- 第一部分：图片展示 -->
+          <!-- 第一部分：轮播图 -->
         <section class="mb-16 fade-in" style="animation-delay: 0.2s;">
             <div class="relative rounded-2xl overflow-hidden shadow-xl">
-                <div class="aspect-[3072/4080] md:aspect-[3072/4080] bg-neutral-200">
-                    <img src="mm.jpg" alt="哈尔滨工业大学校园风景" 
-                         class="w-full h-full object-contain transition-transform duration-700 hover:scale-105">
-                </div>
-                <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent flex items-end">
-                    <div class="p-6 md:p-10 lg:p-12">
-                        <h3 class="text-2xl md:text-4xl font-bold text-white text-shadow mb-2">恶贯满盈的大肥猫本猫</h3>
-                        <p class="text-white/90 text-shadow text-lg max-w-2xl">
-                            
-                        </p>
+                <div class="relative aspect-[3072/4080] md:aspect-[3072/4080] bg-neutral-200" id="carousel">
+                    <!-- 轮播图片 -->
+                    <div class="carousel-container h-full flex transition-transform duration-500" id="carousel-container">
+                        <div class="carousel-item min-w-full h-full">
+                            <img src="mm.jpg" alt="哈尔滨工业大学校园风景1" 
+                                 class="w-full h-full object-cover transition-transform duration-700 hover:scale-105">
+                            <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent flex items-end">
+                                <div class="p-6 md:p-10 lg:p-12">
+                                    <h3 class="text-2xl md:text-4xl font-bold text-white text-shadow mb-2">探索美丽校园</h3>
+                                    <p class="text-white/90 text-shadow text-lg max-w-2xl">
+                                        校园中的每一处角落都承载着青春的记忆与心灵的故事
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="carousel-item min-w-full h-full">
+                            <img src="mm.jpg" alt="哈尔滨工业大学校园风景2" 
+                                 class="w-full h-full object-cover transition-transform duration-700 hover:scale-105">
+                            <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent flex items-end">
+                                <div class="p-6 md:p-10 lg:p-12">
+                                    <h3 class="text-2xl md:text-4xl font-bold text-white text-shadow mb-2">AI与心灵探索</h3>
+                                    <p class="text-white/90 text-shadow text-lg max-w-2xl">
+                                        用科技的力量，探索内心世界的奥秘
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="carousel-item min-w-full h-full">
+                            <img src="mm.jpg" alt="哈尔滨工业大学校园风景3" 
+                                 class="w-full h-full object-cover transition-transform duration-700 hover:scale-105">
+                            <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent flex items-end">
+                                <div class="p-6 md:p-10 lg:p-12">
+                                    <h3 class="text-2xl md:text-4xl font-bold text-white text-shadow mb-2">心理健康体验</h3>
+                                    <p class="text-white/90 text-shadow text-lg max-w-2xl">
+                                        参与互动活动，提升心理素质，拥抱健康生活
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 轮播控制按钮 -->
+                    <button class="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm text-white flex items-center justify-center hover:bg-white/30 transition-colors z-10" id="prev-btn">
+                        <i class="fa fa-chevron-left"></i>
+                    </button>
+                    <button class="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm text-white flex items-center justify-center hover:bg-white/30 transition-colors z-10" id="next-btn">
+                        <i class="fa fa-chevron-right"></i>
+                    </button>
+                    
+                    <!-- 轮播指示器 -->
+                    <div class="absolute bottom-4 left-1/2 -translate-x-1/2 flex space-x-2 z-10">
+                        <button class="w-3 h-3 rounded-full bg-white/50 carousel-indicator active" data-index="0"></button>
+                        <button class="w-3 h-3 rounded-full bg-white/50 carousel-indicator" data-index="1"></button>
+                        <button class="w-3 h-3 rounded-full bg-white/50 carousel-indicator" data-index="2"></button>
                     </div>
                 </div>
             </div>
