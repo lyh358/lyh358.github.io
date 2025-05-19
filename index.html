@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图片与文字展示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3B82F6',
+                        secondary: '#10B981',
+                        neutral: {
+                            100: '#F3F4F6',
+                            200: '#E5E7EB',
+                            800: '#1F2937',
+                            900: '#111827'
+                        }
+                    },
+                    fontFamily: {
+                        inter: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .text-shadow {
+                text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .card-hover {
+                @apply transition-all duration-300 hover:shadow-lg hover:-translate-y-1;
+            }
+            .bg-gradient {
+                background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+            }
+        }
+    </style>
+</head>
+<body class="font-inter bg-neutral-100 text-neutral-800 min-h-screen flex flex-col">
+    <!-- 导航栏 -->
+    <header class="bg-white shadow-sm sticky top-0 z-50 transition-all duration-300" id="navbar">
+        <div class="container mx-auto px-4 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+                <i class="fa fa-image text-primary text-2xl"></i>
+                <h1 class="text-xl font-bold text-neutral-800">图片展示</h1>
+            </div>
+            <nav class="hidden md:flex space-x-8">
+                <a href="#" class="text-neutral-800 hover:text-primary transition-colors font-medium">首页</a>
+                <a href="#" class="text-neutral-800 hover:text-primary transition-colors font-medium">图片库</a>
+                <a href="#" class="text-neutral-800 hover:text-primary transition-colors font-medium">关于</a>
+            </nav>
+            <button class="md:hidden text-neutral-800 text-xl" id="menu-toggle">
+                <i class="fa fa-bars"></i>
+            </button>
+        </div>
+        <!-- 移动端菜单 -->
+        <div class="md:hidden hidden bg-white shadow-md absolute w-full" id="mobile-menu">
+            <div class="container mx-auto px-4 py-2 flex flex-col space-y-3">
+                <a href="#" class="text-neutral-800 hover:text-primary transition-colors py-2 border-b border-neutral-200">首页</a>
+                <a href="#" class="text-neutral-800 hover:text-primary transition-colors py-2 border-b border-neutral-200">图片库</a>
+                <a href="#" class="text-neutral-800 hover:text-primary transition-colors py-2">关于</a>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主内容区 -->
+    <main class="flex-grow container mx-auto px-4 py-8">
+        <section class="max-w-4xl mx-auto bg-white rounded-xl shadow-md overflow-hidden card-hover">
+            <div class="relative h-64 md:h-80 overflow-hidden">
+                <img src="https://picsum.photos/1200/600" alt="示例图片" class="w-full h-full object-cover transition-transform duration-700 hover:scale-105">
+                <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end">
+                    <div class="p-6 md:p-8">
+                        <h2 class="text-2xl md:text-3xl font-bold text-white text-shadow mb-2">探索美丽世界</h2>
+                        <p class="text-white/90 text-shadow">通过我们精选的图片，发现世界的无限魅力</p>
+                    </div>
+                </div>
+            </div>
+            <div class="p-6 md:p-8">
+                <div class="flex items-center mb-4">
+                    <div class="w-12 h-12 rounded-full overflow-hidden mr-4">
+                        <img src="https://picsum.photos/100/100" alt="作者头像" class="w-full h-full object-cover">
+                    </div>
+                    <div>
+                        <p class="font-medium">摄影师：李明</p>
+                        <p class="text-sm text-neutral-500">发布于 2025年5月19日</p>
+                    </div>
+                </div>
+                <div class="prose max-w-none">
+                    <p class="mb-4">这张照片拍摄于一个宁静的清晨，阳光刚刚洒在山顶，给整个山谷披上了一层金色的纱衣。远处的湖泊如镜，倒映着天空和周围的山峦，美得让人窒息。</p>
+                    <p class="mb-4">我在这里静静地坐了几个小时，看着光线一点点变化，感受着大自然的呼吸。这是一种难以言喻的体验，我希望通过这张照片，能将这份宁静和美丽传递给每一个看到它的人。</p>
+                    <p>摄影不仅仅是记录，更是一种情感的表达。每一张照片背后都有一个故事，希望你能从这张照片中找到属于自己的那份感动。</p>
+                </div>
+                <div class="mt-8 pt-6 border-t border-neutral-200">
+                    <h3 class="text-lg font-semibold mb-4">分享这张照片</h3>
+                    <div class="flex space-x-4">
+                        <button class="flex items-center justify-center w-10 h-10 rounded-full bg-[#1877F2] text-white hover:bg-opacity-90 transition-colors">
+                            <i class="fa-brands fa-facebook-f"></i>
+                        </button>
+                        <button class="flex items-center justify-center w-10 h-10 rounded-full bg-[#1DA1F2] text-white hover:bg-opacity-90 transition-colors">
+                            <i class="fa-brands fa-twitter"></i>
+                        </button>
+                        <button class="flex items-center justify-center w-10 h-10 rounded-full bg-[#25D366] text-white hover:bg-opacity-90 transition-colors">
+                            <i class="fa-brands fa-whatsapp"></i>
+                        </button>
+                        <button class="flex items-center justify-center w-10 h-10 rounded-full bg-[#0A66C2] text-white hover:bg-opacity-90 transition-colors">
+                            <i class="fa-brands fa-linkedin-in"></i>
+                        </button>
+                        <button class="flex items-center justify-center w-10 h-10 rounded-full bg-neutral-200 text-neutral-800 hover:bg-neutral-300 transition-colors" id="qrcode-btn">
+                            <i class="fa fa-qrcode"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 相关图片 -->
+        <section class="mt-12">
+            <h2 class="text-2xl font-bold mb-6">相关图片</h2>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="bg-white rounded-xl overflow-hidden shadow-sm card-hover">
+                    <div class="h-48 overflow-hidden">
+                        <img src="https://picsum.photos/600/400?random=1" alt="相关图片1" class="w-full h-full object-cover">
+                    </div>
+                    <div class="p-4">
+                        <h3 class="font-semibold mb-2">山间湖泊</h3>
+                        <p class="text-sm text-neutral-500">宁静的湖水倒映着周围的山峦</p>
+                    </div>
+                </div>
+                <div class="bg-white rounded-xl overflow-hidden shadow-sm card-hover">
+                    <div class="h-48 overflow-hidden">
+                        <img src="https://picsum.photos/600/400?random=2" alt="相关图片2" class="w-full h-full object-cover">
+                    </div>
+                    <div class="p-4">
+                        <h3 class="font-semibold mb-2">日落海滩</h3>
+                        <p class="text-sm text-neutral-500">夕阳的余晖洒在金色的沙滩上</p>
+                    </div>
+                </div>
+                <div class="bg-white rounded-xl overflow-hidden shadow-sm card-hover">
+                    <div class="h-48 overflow-hidden">
+                        <img src="https://picsum.photos/600/400?random=3" alt="相关图片3" class="w-full h-full object-cover">
+                    </div>
+                    <div class="p-4">
+                        <h3 class="font-semibold mb-2">森林小径</h3>
+                        <p class="text-sm text-neutral-500">一条蜿蜒的小路穿过茂密的森林</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="bg-neutral-800 text-white py-8">
+        <div class="container mx-auto px-4">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div>
+                    <h3 class="text-lg font-bold mb-4">图片展示</h3>
+                    <p class="text-neutral-400">收集世界各地的美丽风景，带给你视觉的享受</p>
+                    <div class="flex space-x-4 mt-4">
+                        <a href="#" class="text-neutral-400 hover:text-white transition-colors">
+                            <i class="fa-brands fa-facebook-f"></i>
+                        </a>
+                        <a href="#" class="text-neutral-400 hover:text-white transition-colors">
+                            <i class="fa-brands fa-twitter"></i>
+                        </a>
+                        <a href="#" class="text-neutral-400 hover:text-white transition-colors">
+                            <i class="fa-brands fa-instagram"></i>
+                        </a>
+                        <a href="#" class="text-neutral-400 hover:text-white transition-colors">
+                            <i class="fa-brands fa-pinterest"></i>
+                        </a>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="text-lg font-bold mb-4">快速链接</h3>
+                    <ul class="space-y-2">
+                        <li><a href="#" class="text-neutral-400 hover:text-white transition-colors">首页</a></li>
+                        <li><a href="#" class="text-neutral-400 hover:text-white transition-colors">图片库</a></li>
+                        <li><a href="#" class="text-neutral-400 hover:text-white transition-colors">热门分类</a></li>
+                        <li><a href="#" class="text-neutral-400 hover:text-white transition-colors">关于我们</a></li>
+                        <li><a href="#" class="text-neutral-400 hover:text-white transition-colors">联系方式</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 class="text-lg font-bold mb-4">联系我们</h3>
+                    <ul class="space-y-2">
+                        <li class="flex items-center">
+                            <i class="fa fa-map-marker text-neutral-400 mr-3"></i>
+                            <span class="text-neutral-400">北京市朝阳区某某大厦</span>
+                        </li>
+                        <li class="flex items-center">
+                            <i class="fa fa-phone text-neutral-400 mr-3"></i>
+                            <span class="text-neutral-400">+86 123 4567 8910</span>
+                        </li>
+                        <li class="flex items-center">
+                            <i class="fa fa-envelope text-neutral-400 mr-3"></i>
+                            <span class="text-neutral-400">contact@example.com</span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <div class="border-t border-neutral-700 mt-8 pt-6 text-center text-neutral-500 text-sm">
+                <p>© 2025 图片展示网站. 保留所有权利.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- 二维码模态框 -->
+    <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden" id="qrcode-modal">
+        <div class="bg-white rounded-xl p-6 max-w-md w-full mx-4 transform transition-all duration-300 scale-95 opacity-0" id="modal-content">
+            <div class="text-right">
+                <button class="text-neutral-500 hover:text-neutral-800 transition-colors" id="close-modal">
+                    <i class="fa fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="text-center mt-4">
+                <h3 class="text-xl font-bold mb-2">扫描二维码访问此页面</h3>
+                <p class="text-neutral-500 mb-6">使用手机扫描下方二维码，随时随地查看内容</p>
+                <div class="bg-white p-4 rounded-lg shadow-md inline-block">
+                    <!-- 实际应用中这里应该是真实的二维码，使用占位图代替 -->
+                    <img src="https://picsum.photos/200/200?random=qrcode" alt="二维码" class="w-48 h-48">
+                </div>
+                <p class="mt-4 text-sm text-neutral-500">二维码有效期：永久有效</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 导航栏滚动效果
+        const navbar = document.getElementById('navbar');
+        window.addEventListener('scroll', () => {
+            if (window.scrollY > 50) {
+                navbar.classList.add('py-2', 'shadow-md');
+                navbar.classList.remove('py-4', 'shadow-sm');
+            } else {
+                navbar.classList.add('py-4', 'shadow-sm');
+                navbar.classList.remove('py-2', 'shadow-md');
+            }
+        });
+
+        // 移动端菜单切换
+        const menuToggle = document.getElementById('menu-toggle');
+        const mobileMenu = document.getElementById('mobile-menu');
+        menuToggle.addEventListener('click', () => {
+            mobileMenu.classList.toggle('hidden');
+            menuToggle.innerHTML = mobileMenu.classList.contains('hidden') 
+                ? '<i class="fa fa-bars"></i>' 
+                : '<i class="fa fa-times"></i>';
+        });
+
+        // 二维码模态框
+        const qrcodeBtn = document.getElementById('qrcode-btn');
+        const qrcodeModal = document.getElementById('qrcode-modal');
+        const modalContent = document.getElementById('modal-content');
+        const closeModal = document.getElementById('close-modal');
+
+        qrcodeBtn.addEventListener('click', () => {
+            qrcodeModal.classList.remove('hidden');
+            // 添加动画效果
+            setTimeout(() => {
+                modalContent.classList.remove('scale-95', 'opacity-0');
+                modalContent.classList.add('scale-100', 'opacity-100');
+            }, 10);
+        });
+
+        function hideModal() {
+            modalContent.classList.remove('scale-100', 'opacity-100');
+            modalContent.classList.add('scale-95', 'opacity-0');
+            setTimeout(() => {
+                qrcodeModal.classList.add('hidden');
+            }, 300);
+        }
+
+        closeModal.addEventListener('click', hideModal);
+
+        // 点击模态框外部关闭
+        qrcodeModal.addEventListener('click', (e) => {
+            if (e.target === qrcodeModal) {
+                hideModal();
+            }
+        });
+
+        // 键盘ESC关闭模态框
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !qrcodeModal.classList.contains('hidden')) {
+                hideModal();
+            }
+        });
+    </script>
+</body>
+</html>
+    
