@@ -16,6 +16,14 @@ const Store = {
     return !!(v && v.trim());
   },
 
+  // ---- 题目描述（用户自填的 markdown）----
+  getDesc(id) { return localStorage.getItem(NS + "desc:" + id) || ""; },
+  setDesc(id, md) {
+    if (md && md.trim()) localStorage.setItem(NS + "desc:" + id, md);
+    else localStorage.removeItem(NS + "desc:" + id);
+  },
+  hasDesc(id) { const v = localStorage.getItem(NS + "desc:" + id); return !!(v && v.trim()); },
+
   // ---- 完成状态：0 未开始 / 1 已解决 / 2 需复习 ----
   getStatus(id) {
     return parseInt(localStorage.getItem(NS + "status:" + id) || "0", 10);
@@ -77,5 +85,43 @@ const Store = {
       if (this.hasNote(p.id)) noted++;
     });
     return { solved, review, noted, total: PROBLEMS.length };
+  }
+};
+
+// ---- PDF 题面：存 IndexedDB（二进制，不占 localStorage 容量）----
+const PdfDB = {
+  _db: null,
+  _open() {
+    if (this._db) return Promise.resolve(this._db);
+    return new Promise((res, rej) => {
+      const r = indexedDB.open("leetweb", 1);
+      r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains("pdf")) r.result.createObjectStore("pdf"); };
+      r.onsuccess = () => { this._db = r.result; res(r.result); };
+      r.onerror = () => rej(r.error);
+    });
+  },
+  async put(id, blob, name) {
+    const db = await this._open();
+    return new Promise((res, rej) => {
+      const tx = db.transaction("pdf", "readwrite");
+      tx.objectStore("pdf").put({ blob, name }, String(id));
+      tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
+    });
+  },
+  async get(id) {
+    const db = await this._open();
+    return new Promise((res, rej) => {
+      const tx = db.transaction("pdf", "readonly");
+      const rq = tx.objectStore("pdf").get(String(id));
+      rq.onsuccess = () => res(rq.result || null); rq.onerror = () => rej(rq.error);
+    });
+  },
+  async del(id) {
+    const db = await this._open();
+    return new Promise((res, rej) => {
+      const tx = db.transaction("pdf", "readwrite");
+      tx.objectStore("pdf").delete(String(id));
+      tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
+    });
   }
 };

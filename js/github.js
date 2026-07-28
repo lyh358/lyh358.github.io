@@ -102,6 +102,66 @@ const Sync = (() => {
     return d;
   }
 
+  function descPath(id) { const p = PROBLEM_BY_ID[id]; return `desc/${id}-${p ? p.slug : id}.md`; }
+  function pdfPath(id) { const p = PROBLEM_BY_ID[id]; return `desc/${id}-${p ? p.slug : id}.pdf`; }
+
+  async function pushDesc(id, md) {
+    if (md && md.trim()) await putFile(descPath(id), md, `desc: ${id}`);
+    else await deleteFile(descPath(id), `remove desc: ${id}`);
+  }
+  async function pullDesc(id) {
+    const f = await getFile(descPath(id));
+    return f ? f.content : null;
+  }
+
+  // 取文件 sha（不解码内容，供二进制/覆盖用）
+  async function getSha(path) {
+    const c = getCfg();
+    const res = await api(`/repos/${c.owner}/${c.repo}/contents/${encPath(path)}?ref=${branch()}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`读取失败 (${res.status})`);
+    const d = await res.json();
+    shaCache[path] = d.sha;
+    return d.sha;
+  }
+  function abToBase64(buf) {
+    const bytes = new Uint8Array(buf);
+    let bin = ""; const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    return btoa(bin);
+  }
+  async function pushPdf(id, arrayBuffer) {
+    const c = getCfg();
+    const path = pdfPath(id);
+    const body = { message: `pdf: ${id}`, content: abToBase64(arrayBuffer), branch: branch() };
+    let sha = shaCache[path]; if (sha === undefined) sha = await getSha(path);
+    if (sha) body.sha = sha;
+    const url = `/repos/${c.owner}/${c.repo}/contents/${encPath(path)}`;
+    let res = await api(url, { method: "PUT", body: JSON.stringify(body) });
+    if (res.status === 409 || res.status === 422) { const s = await getSha(path); if (s) body.sha = s; else delete body.sha; res = await api(url, { method: "PUT", body: JSON.stringify(body) }); }
+    if (!res.ok) throw new Error(`PDF 上传失败 (${res.status})`);
+    const d = await res.json(); if (d.content) shaCache[path] = d.content.sha;
+  }
+  async function pullPdf(id) {
+    const c = getCfg();
+    const res = await api(`/repos/${c.owner}/${c.repo}/contents/${encPath(pdfPath(id))}?ref=${branch()}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`读取 PDF 失败 (${res.status})`);
+    const d = await res.json();
+    shaCache[pdfPath(id)] = d.sha;
+    let b64 = d.content;
+    if (!b64) { // 文件较大，contents 不带内容，走 blobs API
+      const br = await api(`/repos/${c.owner}/${c.repo}/git/blobs/${d.sha}`);
+      if (!br.ok) throw new Error(`读取 PDF 失败 (${br.status})`);
+      b64 = (await br.json()).content;
+    }
+    const bin = atob((b64 || "").replace(/\n/g, ""));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: "application/pdf" });
+  }
+  async function deletePdf(id) { await deleteFile(pdfPath(id), `remove pdf: ${id}`); }
+
   async function pushNote(id, md) {
     if (md && md.trim()) { await putFile(notePath(id), md, `note: ${id}`); remoteNoteIds.add(Number(id)); }
     else { await deleteFile(notePath(id), `remove note: ${id}`); remoteNoteIds.delete(Number(id)); }
@@ -157,5 +217,6 @@ const Sync = (() => {
     getCfg, setCfg, clearCfg, configured, branch,
     test, pushNote, pullNote, pushMeta, pullMeta, listNotes, initialPull,
     hasRemoteNote, notePath,
+    pushDesc, pullDesc, pushPdf, pullPdf, deletePdf, descPath, pdfPath,
   };
 })();

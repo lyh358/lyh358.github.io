@@ -18,6 +18,8 @@ const ICON = {
   upload:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 8l5-5 5 5M12 3v12"/></svg>',
   download:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
   search:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
+  file:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>',
+  trash:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>',
 };
 
 /* ---------- 主题 ---------- */
@@ -34,6 +36,13 @@ function initTheme() {
     Store.setTheme(next); applyTheme(next);
   };
 }
+
+/* ---------- 布局：测量顶栏高度，保证详情页左右独立滚动 ---------- */
+function setTopbarVar() {
+  const tb = document.querySelector(".topbar");
+  if (tb) document.documentElement.style.setProperty("--topbar-h", tb.offsetHeight + "px");
+}
+window.addEventListener("resize", setTopbarVar);
 
 /* ---------- Toast ---------- */
 let toastTimer;
@@ -203,6 +212,7 @@ function statusClass(id) {
 let filterState = { cat: "全部", diff: 0, star: false, q: "" };
 
 function renderList() {
+  document.body.classList.remove("detail-mode");
   const st = Store.stats();
   const pct = Math.round(st.solved / st.total * 100);
   const circ = 2 * Math.PI * 52;
@@ -335,41 +345,56 @@ function cardHtml(p) {
 /* =========================================================
    详情页
    ========================================================= */
-let saveTimer;
+let saveTimer, descTimer;
 function renderDetail(id) {
   const p = PROBLEM_BY_ID[id];
   if (!p) { location.hash = "#/"; return; }
+  document.body.classList.add("detail-mode");
+  setTopbarVar();
   const lcUrl = `https://leetcode.cn/problems/${p.slug}/`;
   const note = Store.getNote(id);
+  const desc = Store.getDesc(id);
   const status = Store.getStatus(id);
   const starred = Store.isStarred(id);
 
   app.innerHTML = `
   <div class="view">
     <div class="detail">
-      <!-- 左：题目 -->
+      <!-- 左：题目描述（可编辑/预览）-->
       <div class="pane left">
         <div class="pane-head">
           <span class="back-btn" onclick="location.hash='#/'">${ICON.back} 返回</span>
+          <div class="seg" id="descSeg">
+            <button data-mode="edit">编辑</button>
+            <button data-mode="view" class="active">预览</button>
+          </div>
           <div class="spacer"></div>
-          <span class="label">题 · ${p.id}</span>
+          <span class="save-hint" id="descHint">题面自动保存</span>
         </div>
-        <div class="pane-body">
-          <h1 class="detail-title">${p.title}</h1>
-          <div class="detail-meta">
-            <span class="tag d${p.diff}">${DIFF_TEXT[p.diff]}</span>
-            <span class="tag">${p.cat}</span>
-            <span class="tag">#${p.id}</span>
+        <div class="pane-body" style="padding:0; display:flex; flex-direction:column;">
+          <div class="prob-header">
+            <h1 class="detail-title">${p.title}</h1>
+            <div class="detail-meta">
+              <span class="tag d${p.diff}">${DIFF_TEXT[p.diff]}</span>
+              <span class="tag">${p.cat}</span>
+              <span class="tag">#${p.id}</span>
+              <a class="lc-link sm" href="${lcUrl}" target="_blank" rel="noopener">${ICON.external} LeetCode 原题</a>
+            </div>
           </div>
-          <a class="lc-link" href="${lcUrl}" target="_blank" rel="noopener">
-            ${ICON.external} 在 LeetCode 查看原题
-          </a>
-          <div class="desc-note">
-            <b>题目描述</b><br/>
-            LeetCode 原题描述受版权保护，未在本站转载。点击上方按钮即可在 LeetCode
-            打开完整题面、示例与约束。你也可以把自己整理的题意、思路要点写进右侧笔记，随手记录。
+          <div id="descEdit" style="flex:1; display:none; flex-direction:column; padding:clamp(18px,2.5vw,30px);">
+            <textarea class="editor" id="descEditor" placeholder="在此写下或粘贴题目描述（支持 Markdown）。\n也可以用下方按钮上传整理好的 .md，或上传 PDF 题面。">${escapeHtml(desc)}</textarea>
           </div>
+          <div id="descView" style="flex:1; overflow-y:auto; padding:clamp(18px,2.5vw,30px);"></div>
         </div>
+        <div class="pane-foot">
+          <button class="btn" id="upDescMd">${ICON.upload} 上传 MD</button>
+          <button class="btn" id="upDescPdf">${ICON.file} 上传 PDF</button>
+          <button class="btn" id="rmPdf" style="display:none;">${ICON.trash} 移除 PDF</button>
+          <div class="spacer"></div>
+          <button class="btn primary" id="saveDesc">${ICON.save} 保存</button>
+        </div>
+        <input type="file" id="descMdFile" accept=".md,.markdown,.txt" hidden />
+        <input type="file" id="descPdfFile" accept="application/pdf,.pdf" hidden />
       </div>
 
       <!-- 右：笔记 -->
@@ -379,6 +404,7 @@ function renderDetail(id) {
             <button data-mode="edit" class="active">编辑</button>
             <button data-mode="view">预览</button>
           </div>
+          <span class="label note-label">笔记</span>
           <div class="spacer"></div>
           <span class="save-hint" id="saveHint">自动保存</span>
           <select class="status-select" id="statusSel">
@@ -396,7 +422,7 @@ function renderDetail(id) {
           </div>
           <div id="viewWrap" style="flex:1; overflow-y:auto; padding:clamp(20px,3vw,36px); display:none;"></div>
         </div>
-        <div class="pane-head" style="border-top:1px solid var(--line-soft); border-bottom:0;">
+        <div class="pane-foot">
           <button class="btn" id="uploadMd">${ICON.upload} 上传 .md</button>
           <button class="btn" id="downloadMd">${ICON.download} 下载 .md</button>
           <div class="spacer"></div>
@@ -407,6 +433,117 @@ function renderDetail(id) {
     </div>
   </div>`;
 
+  /* ---------------- 左栏：题目描述 ---------------- */
+  const descEditor = document.getElementById("descEditor");
+  const descEdit = document.getElementById("descEdit");
+  const descView = document.getElementById("descView");
+  const descHint = document.getElementById("descHint");
+  let pdfUrl = null, pdfName = null;
+
+  function flashHint(el, text) {
+    el.textContent = text; el.classList.add("show");
+    setTimeout(() => { el.classList.remove("show"); el.textContent = el === descHint ? "题面自动保存" : "自动保存"; }, 1600);
+  }
+  function renderDescView() {
+    const parts = [];
+    if (pdfUrl) parts.push(`<div class="pdf-wrap"><iframe class="pdf-frame" src="${pdfUrl}" title="PDF 题面"></iframe></div>`);
+    const md = descEditor.value;
+    if (md.trim()) parts.push(`<div class="markdown">${renderMarkdown(md)}</div>`);
+    if (!parts.length) { descView.innerHTML = `<div class="empty-note"><span class="brush">题</span><p>还没有题目描述。<br/>切到「编辑」写下，或上传 MD / PDF 题面。</p></div>`; return; }
+    descView.innerHTML = parts.join("");
+    descView.querySelectorAll("pre code").forEach(b => { try { hljs.highlightElement(b); } catch (e) {} });
+  }
+  function setDescMode(mode) {
+    document.querySelectorAll("#descSeg button").forEach(x => x.classList.toggle("active", x.dataset.mode === mode));
+    if (mode === "view") { renderDescView(); descEdit.style.display = "none"; descView.style.display = "block"; }
+    else { descEdit.style.display = "flex"; descView.style.display = "none"; }
+  }
+  async function persistDesc(showToast) {
+    Store.setDesc(id, descEditor.value);
+    flashHint(descHint, Sync.configured() ? "同步中…" : "已保存");
+    if (Sync.configured()) {
+      try { setSyncState("busy"); await Sync.pushDesc(id, descEditor.value); setSyncState("ok"); flashHint(descHint, "已同步"); }
+      catch (e) { setSyncState("err", e.message); toast("题面同步失败：" + e.message); return; }
+    }
+    if (showToast) toast("题目描述已保存");
+  }
+  descEditor.oninput = () => { clearTimeout(descTimer); descTimer = setTimeout(() => persistDesc(false), 800); };
+  descEditor.onkeydown = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); persistDesc(true); } };
+  document.getElementById("saveDesc").onclick = () => persistDesc(true);
+  document.querySelectorAll("#descSeg button").forEach(b => b.onclick = () => setDescMode(b.dataset.mode));
+  setDescMode(desc.trim() ? "view" : "edit");
+
+  // 上传描述 MD
+  const descMdFile = document.getElementById("descMdFile");
+  document.getElementById("upDescMd").onclick = () => descMdFile.click();
+  descMdFile.onchange = (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (descEditor.value.trim() && !confirm("当前已有描述内容，上传的文件将覆盖它，确定继续？")) { descMdFile.value = ""; return; }
+      descEditor.value = reader.result; persistDesc(true); setDescMode("view"); toast(`已导入 ${f.name}`); descMdFile.value = "";
+    };
+    reader.readAsText(f);
+  };
+
+  // PDF：展示 / 上传 / 移除
+  const rmPdfBtn = document.getElementById("rmPdf");
+  function showPdf(blob, name) {
+    if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+    pdfUrl = URL.createObjectURL(blob); pdfName = name || "题面.pdf";
+    rmPdfBtn.style.display = "";
+    setDescMode("view");
+  }
+  function hidePdf() {
+    if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+    pdfUrl = null; pdfName = null; rmPdfBtn.style.display = "none"; renderDescView();
+  }
+  const descPdfFile = document.getElementById("descPdfFile");
+  document.getElementById("upDescPdf").onclick = () => descPdfFile.click();
+  descPdfFile.onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return; descPdfFile.value = "";
+    if (f.type !== "application/pdf" && !/\.pdf$/i.test(f.name)) { toast("请选择 PDF 文件"); return; }
+    const buf = await f.arrayBuffer();
+    await PdfDB.put(id, new Blob([buf], { type: "application/pdf" }), f.name);
+    showPdf(new Blob([buf], { type: "application/pdf" }), f.name);
+    toast(`已加载 ${f.name}`);
+    if (Sync.configured()) {
+      if (buf.byteLength > 10 * 1024 * 1024) { toast("PDF 超过 10MB，仅保存在本设备，未上传 GitHub"); return; }
+      try { setSyncState("busy"); await Sync.pushPdf(id, buf); setSyncState("ok"); toast("PDF 已同步到 GitHub"); }
+      catch (err) { setSyncState("err", err.message); toast("PDF 同步失败（已存本地）：" + err.message); }
+    }
+  };
+  rmPdfBtn.onclick = async () => {
+    if (!confirm("确定移除这道题的 PDF 题面？")) return;
+    hidePdf(); await PdfDB.del(id);
+    if (Sync.configured()) { try { await Sync.deletePdf(id); } catch (e) {} }
+    toast("已移除 PDF");
+  };
+
+  // 载入本题 PDF（本地优先，其次云端）
+  (async () => {
+    try {
+      const local = await PdfDB.get(id);
+      if (local && local.blob) { showPdf(local.blob, local.name); return; }
+      if (Sync.configured()) {
+        const blob = await Sync.pullPdf(id);
+        if (blob) { await PdfDB.put(id, blob, `${id}.pdf`); showPdf(blob, `${id}.pdf`); }
+      }
+    } catch (e) { /* 忽略 PDF 载入错误 */ }
+  })();
+
+  // 云端拉取题目描述（用户未改动时覆盖）
+  if (Sync.configured()) {
+    const descAtOpen = desc;
+    Sync.pullDesc(id).then(remote => {
+      if (remote != null && remote !== descEditor.value && descEditor.value === descAtOpen) {
+        descEditor.value = remote; Store.setDesc(id, remote);
+        if (document.querySelector("#descSeg button.active")?.dataset.mode === "view") renderDescView();
+      }
+    }).catch(() => {});
+  }
+
+  /* ---------------- 右栏：笔记 ---------------- */
   const editor = document.getElementById("editor");
   const editWrap = document.getElementById("editWrap");
   const viewWrap = document.getElementById("viewWrap");
@@ -433,6 +570,7 @@ function renderDetail(id) {
       if (remote != null && remote !== editor.value && editor.value === localAtOpen) {
         editor.value = remote;
         Store.setNote(id, remote);
+        if (document.querySelector("#modeSeg button.active")?.dataset.mode === "view") renderMarkdownInto(viewWrap, remote);
         saveHint.textContent = "已载入云端笔记"; saveHint.classList.add("show");
         setTimeout(() => { saveHint.textContent = "自动保存"; saveHint.classList.remove("show"); }, 1600);
       }
@@ -445,22 +583,22 @@ function renderDetail(id) {
   };
 
   // 模式切换
-  document.getElementById("modeSeg").querySelectorAll("button").forEach(b => {
-    b.onclick = () => {
-      document.querySelectorAll("#modeSeg button").forEach(x => x.classList.remove("active"));
-      b.classList.add("active");
-      if (b.dataset.mode === "view") {
-        const md = editor.value;
-        if (md.trim()) renderMarkdownInto(viewWrap, md);
-        else viewWrap.innerHTML = `<div class="empty-note"><span class="brush">墨</span><p>暂无笔记，切到「编辑」写下第一笔。</p></div>`;
-        editWrap.style.display = "none";
-        viewWrap.style.display = "block";
-      } else {
-        editWrap.style.display = "flex";
-        viewWrap.style.display = "none";
-      }
-    };
-  });
+  function setNoteMode(mode) {
+    document.querySelectorAll("#modeSeg button").forEach(x => x.classList.toggle("active", x.dataset.mode === mode));
+    if (mode === "view") {
+      const md = editor.value;
+      if (md.trim()) renderMarkdownInto(viewWrap, md);
+      else viewWrap.innerHTML = `<div class="empty-note"><span class="brush">墨</span><p>暂无笔记，切到「编辑」写下第一笔。</p></div>`;
+      editWrap.style.display = "none";
+      viewWrap.style.display = "block";
+    } else {
+      editWrap.style.display = "flex";
+      viewWrap.style.display = "none";
+    }
+  }
+  document.querySelectorAll("#modeSeg button").forEach(b => b.onclick = () => setNoteMode(b.dataset.mode));
+  // 默认：有内容显示预览，空白显示编辑
+  setNoteMode(note.trim() ? "view" : "edit");
 
   // 状态
   document.getElementById("statusSel").onchange = (e) => {
