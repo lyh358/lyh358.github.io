@@ -27,8 +27,13 @@
     <div class="brand" onclick="location.hash='#/'">
       <span class="seal">拾</span>
       <span class="mark">拾遗</span>
-      <span class="sub">HOT 100 · 笔记</span>
     </div>
+    <nav class="topnav" id="topnav">
+      <a href="#/hot100" data-nav="hot100">热题 100</a>
+      <a href="#/custom" data-nav="custom">手撕题库</a>
+      <a href="#/kb" data-nav="kb">知识库</a>
+      <a href="#/resume" data-nav="resume">简历</a>
+    </nav>
     <div class="spacer"></div>
     <button class="icon-btn sync-btn" id="syncBtn" title="GitHub 同步设置">
       <span id="syncDot" class="sync-dot off"></span>
@@ -53,6 +58,7 @@
   <script src="js/data.js"></script>
   <script src="js/storage.js"></script>
   <script src="js/github.js"></script>
+  <script src="js/modules.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

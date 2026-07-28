@@ -20,6 +20,8 @@ const ICON = {
   search:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
   file:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>',
   trash:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>',
+  folder:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>',
+  pencil:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
 };
 
 /* ---------- 主题 ---------- */
@@ -222,8 +224,8 @@ function renderList() {
   <div class="view">
     <div class="wrap">
       <section class="hero">
-        <h1>拾遗</h1>
-        <p>为 LeetCode 热题 100 而作的笔记之地。左手题目，右手心得，以 Markdown 记录每一次推敲。此处崇尚素简 —— 残缺、朴拙、无常，皆是学习的痕迹。</p>
+        <h1>热题 100</h1>
+        <p>LeetCode 官方精选 100 题。左手题目，右手心得，以 Markdown 记录每一次推敲。此处崇尚素简 —— 残缺、朴拙、无常，皆是学习的痕迹。</p>
         <div class="dashboard">
           <div class="progress-ring">
             <svg width="118" height="118">
@@ -363,7 +365,7 @@ function renderDetail(id) {
       <!-- 左：题目描述（可编辑/预览）-->
       <div class="pane left">
         <div class="pane-head">
-          <span class="back-btn" onclick="location.hash='#/'">${ICON.back} 返回</span>
+          <span class="back-btn" onclick="location.hash='#/hot100'">${ICON.back} 返回</span>
           <div class="seg" id="descSeg">
             <button data-mode="edit">编辑</button>
             <button data-mode="view" class="active">预览</button>
@@ -652,24 +654,37 @@ function escapeHtml(s) {
    ========================================================= */
 function route() {
   const hash = location.hash || "#/";
-  const m = hash.match(/^#\/p\/(\d+)/);
-  if (m) {
-    renderDetail(parseInt(m[1], 10));
-    window.scrollTo(0, 0);
-  } else {
-    renderList();
-  }
+  let m;
+  if (hash === "#/" || hash === "") { renderHome(); return; }
+  if (hash === "#/hot100") { setNav("hot100"); renderList(); return; }
+  if ((m = hash.match(/^#\/p\/(\d+)/))) { setNav("hot100"); renderDetail(parseInt(m[1], 10)); window.scrollTo(0, 0); return; }
+  if (hash === "#/custom") { renderCustomList(); return; }
+  if ((m = hash.match(/^#\/custom\/([\w-]+)/))) { renderCustomDetail(m[1]); window.scrollTo(0, 0); return; }
+  if (hash === "#/kb") { renderKb(null); return; }
+  if ((m = hash.match(/^#\/kb\/f\/([\w-]+)/))) { renderKb(m[1]); return; }
+  if ((m = hash.match(/^#\/kb\/n\/([\w-]+)/))) { renderKbNote(m[1]); window.scrollTo(0, 0); return; }
+  if (hash === "#/resume") { renderResume(null); return; }
+  if ((m = hash.match(/^#\/resume\/([\w-]+)/))) { renderResume(m[1]); return; }
+  renderHome();
+}
+
+// 列表类路由（拉取云端目录后可安全重渲染，不会打断编辑）
+function isListRoute() {
+  const h = location.hash || "#/";
+  return h === "#/" || h === "" || h === "#/hot100" || h === "#/custom" || h === "#/kb" || /^#\/kb\/f\//.test(h) || /^#\/resume/.test(h);
 }
 
 function initSync() {
   const btn = document.getElementById("syncBtn");
   if (btn) btn.onclick = openSettings;
+  document.querySelectorAll("#topnav a").forEach(a => {}); // 导航为原生链接，无需绑定
   refreshSyncDot();
-  // 已连接则后台拉取云端状态与笔记清单，完成后刷新列表
+  // 已连接则后台拉取云端状态、笔记清单与各模块目录，完成后刷新列表页
   if (Sync.configured()) {
     setSyncState("busy");
     Sync.initialPull()
-      .then(() => { setSyncState("ok"); if ((location.hash || "#/") === "#/") renderCategories(); })
+      .then(() => moduleInitialPull())
+      .then(() => { setSyncState("ok"); if (isListRoute()) route(); })
       .catch(e => setSyncState("err", e.message));
   }
 }

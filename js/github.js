@@ -213,10 +213,39 @@ const Sync = (() => {
 
   function hasRemoteNote(id) { return remoteNoteIds.has(Number(id)); }
 
+  // ---- 通用文件读写（供手撕题库 / 知识库使用，路径任意）----
+  async function readText(path) { const f = await getFile(path); return f ? f.content : null; }
+  async function writeText(path, str, msg) { await putFile(path, str, msg || ("update " + path)); }
+  async function remove(path, msg) { await deleteFile(path, msg || ("remove " + path)); }
+  async function writeBinary(path, buf, msg) {
+    const c = getCfg();
+    const body = { message: msg || ("update " + path), content: abToBase64(buf), branch: branch() };
+    let sha = shaCache[path]; if (sha === undefined) sha = await getSha(path);
+    if (sha) body.sha = sha;
+    const url = `/repos/${c.owner}/${c.repo}/contents/${encPath(path)}`;
+    let res = await api(url, { method: "PUT", body: JSON.stringify(body) });
+    if (res.status === 409 || res.status === 422) { const s = await getSha(path); if (s) body.sha = s; else delete body.sha; res = await api(url, { method: "PUT", body: JSON.stringify(body) }); }
+    if (!res.ok) throw new Error(`上传失败 (${res.status})`);
+    const d = await res.json(); if (d.content) shaCache[path] = d.content.sha;
+  }
+  async function readBinary(path, mime) {
+    const c = getCfg();
+    const res = await api(`/repos/${c.owner}/${c.repo}/contents/${encPath(path)}?ref=${branch()}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`读取失败 (${res.status})`);
+    const d = await res.json(); shaCache[path] = d.sha;
+    let b64 = d.content;
+    if (!b64) { const br = await api(`/repos/${c.owner}/${c.repo}/git/blobs/${d.sha}`); if (!br.ok) throw new Error(`读取失败 (${br.status})`); b64 = (await br.json()).content; }
+    const bin = atob((b64 || "").replace(/\n/g, "")); const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: mime || "application/octet-stream" });
+  }
+
   return {
     getCfg, setCfg, clearCfg, configured, branch,
     test, pushNote, pullNote, pushMeta, pullMeta, listNotes, initialPull,
     hasRemoteNote, notePath,
     pushDesc, pullDesc, pushPdf, pullPdf, deletePdf, descPath, pdfPath,
+    readText, writeText, writeBinary, readBinary, remove,
   };
 })();
