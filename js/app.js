@@ -22,6 +22,8 @@ const ICON = {
   trash:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>',
   folder:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>',
   pencil:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
+  expand:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3"/></svg>',
+  compress:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3m8 0v-3a2 2 0 0 1 2-2h3"/></svg>',
 };
 
 /* ---------- 主题 ---------- */
@@ -152,23 +154,25 @@ function openSettings() {
 
 /* ---------- 导入 / 导出 ---------- */
 function initBackup() {
-  document.getElementById("exportBtn").onclick = () => {
-    const data = Store.exportAll();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  document.getElementById("exportBtn").onclick = async () => {
+    toast("正在打包全站备份…");
+    const data = await Backup.export();
+    const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `leetweb-备份-${new Date().toISOString().slice(0,10)}.json`;
+    a.download = `拾遗-全站备份-${new Date().toISOString().slice(0,10)}.json`;
     a.click(); URL.revokeObjectURL(a.href);
-    toast("已导出全部笔记与进度");
+    toast("已导出全站备份（含四个模块与 PDF）");
   };
   const fileInput = document.getElementById("importFile");
   document.getElementById("importBtn").onclick = () => fileInput.click();
   fileInput.onchange = (e) => {
     const f = e.target.files[0]; if (!f) return;
+    if (!confirm("导入备份会覆盖当前同名数据，确定继续？")) { fileInput.value = ""; return; }
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
-        Store.importAll(JSON.parse(reader.result));
+        await Backup.import(JSON.parse(reader.result));
         toast("导入成功");
         route();
       } catch (err) { toast("导入失败：" + err.message); }
@@ -295,11 +299,18 @@ function renderCategories() {
     const items = PROBLEMS.filter(p => p.cat === cat && matchFilter(p));
     if (!items.length) return;
     const idx = String(i + 1).padStart(2, "0");
+    const catAll = PROBLEMS.filter(p => p.cat === cat);
+    const catSolved = catAll.filter(p => Store.getStatus(p.id) === 1).length;
+    const catPct = Math.round(catSolved / catAll.length * 100);
     html += `
       <section class="category">
         <div class="category-head">
           <span class="idx">${idx}</span>
           <h2>${cat}</h2>
+          <div class="cat-prog" title="${catSolved}/${catAll.length} 已解决">
+            <div class="cat-prog-bar"><span style="width:${catPct}%"></span></div>
+            <span class="cat-prog-num">${catSolved}/${catAll.length}</span>
+          </div>
           <span class="count">${items.length} 题</span>
         </div>
         <div class="problem-grid">

@@ -12,6 +12,34 @@ function setNav(section) {
   document.querySelectorAll("#topnav a").forEach(a => a.classList.toggle("active", a.dataset.nav === section));
 }
 
+/* ---------- 全站备份：全部 localStorage(除 token) + 全部 PDF ---------- */
+function blobToB64(blob) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.onerror = rej; r.readAsDataURL(blob); }); }
+function b64ToBlob(b64, type) { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return new Blob([a], { type }); }
+const Backup = {
+  async export() {
+    const ls = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("leetweb:") && k !== "leetweb:gh") ls[k] = localStorage.getItem(k);
+    }
+    const pdfs = {};
+    try { for (const e of await PdfDB.all()) pdfs[e.key] = { name: e.name, data: await blobToB64(e.blob) }; } catch (e) {}
+    return { app: "leetweb", version: 2, exportedAt: new Date().toISOString(), ls, pdfs };
+  },
+  async import(data) {
+    if (data && data.items && !data.ls) { Store.importAll(data); return; } // 兼容旧版 v1
+    if (!data || !data.ls) throw new Error("文件格式不正确");
+    Object.entries(data.ls).forEach(([k, v]) => { if (k.startsWith("leetweb:") && k !== "leetweb:gh") localStorage.setItem(k, v); });
+    if (data.pdfs) for (const [key, v] of Object.entries(data.pdfs)) { try { await PdfDB.put(key, b64ToBlob(v.data, "application/pdf"), v.name); } catch (e) {} }
+  },
+};
+
+/* ---------- 全屏切换 ---------- */
+function toggleFullscreen(el) {
+  if (document.fullscreenElement) { (document.exitFullscreen || document.webkitExitFullscreen || function () {}).call(document); }
+  else { (el.requestFullscreen || el.webkitRequestFullscreen || function () { toast("当前浏览器不支持全屏"); }).call(el); }
+}
+
 /* ---------- 通用输入弹窗 ---------- */
 function openPrompt(opts) {
   return new Promise(resolve => {
@@ -483,6 +511,19 @@ const KbStore = {
   getFolder(id) { return this.load().folders.find(f => f.id === id); },
   getNote(id) { return this.load().notes.find(n => n.id === id); },
   rename(id, name) { const t = this.load(); const f = t.folders.find(x => x.id === id) || t.notes.find(x => x.id === id); if (f) { f.name = name; this.save(t); } },
+  move(id, newParent) {
+    const t = this.load(); newParent = newParent || null;
+    const note = t.notes.find(n => n.id === id);
+    if (note) { if ((note.parent || null) === newParent) return false; note.parent = newParent; this.save(t); return true; }
+    const folder = t.folders.find(f => f.id === id);
+    if (folder) {
+      if (id === newParent || (folder.parent || null) === newParent) return false;
+      let cur = newParent ? t.folders.find(f => f.id === newParent) : null;   // 防环：目标不能是自己的后代
+      while (cur) { if (cur.id === id) return false; cur = cur.parent ? t.folders.find(f => f.id === cur.parent) : null; }
+      folder.parent = newParent; this.save(t); return true;
+    }
+    return false;
+  },
   children(parent) { const t = this.load(); parent = parent || null; return { folders: t.folders.filter(f => (f.parent || null) === parent), notes: t.notes.filter(n => (n.parent || null) === parent) }; },
   crumbs(folderId) { const t = this.load(); const path = []; let cur = folderId ? t.folders.find(f => f.id === folderId) : null; while (cur) { path.unshift(cur); cur = cur.parent ? t.folders.find(f => f.id === cur.parent) : null; } return path; },
   removeNote(id) { const t = this.load(); t.notes = t.notes.filter(n => n.id !== id); this.save(t); localStorage.removeItem("leetweb:kb:md:" + id); },
@@ -510,6 +551,35 @@ async function pullKbIndex() {
   try { const t = await Sync.readText("kb/index.json"); if (t) KbStore.save(JSON.parse(t)); } catch (e) {}
 }
 
+// 批量导入文件到知识库当前文件夹（支持 md 与 pdf，多文件）
+async function importFilesToKb(folderId, fileList) {
+  const files = [...fileList].filter(f => f.type === "application/pdf" || /\.(pdf|md|markdown|txt)$/i.test(f.name));
+  const skipped = fileList.length - files.length;
+  if (!files.length) { toast("请选择 PDF 或 Markdown 文件"); return; }
+  setSyncState("busy");
+  let done = 0;
+  for (const f of files) {
+    const isPdf = f.type === "application/pdf" || /\.pdf$/i.test(f.name);
+    const name = f.name.replace(/\.(pdf|md|markdown|txt)$/i, "");
+    if (isPdf) {
+      const n = KbStore.addNote(name, folderId, "pdf");
+      const buf = await f.arrayBuffer();
+      await PdfDB.put("kb-" + n.id, new Blob([buf], { type: "application/pdf" }), f.name);
+      if (Sync.configured() && buf.byteLength <= 10 * 1024 * 1024) { try { await Sync.writeBinary(kbPdfPath(n.id), buf, "kb pdf"); } catch (e) {} }
+    } else {
+      const n = KbStore.addNote(name, folderId, "md");
+      const text = await f.text();
+      KbStore.setMd(n.id, text);
+      if (Sync.configured()) { try { await Sync.writeText(kbMdPath(n.id), text, "kb md"); } catch (e) {} }
+    }
+    done++;
+  }
+  await syncKbIndex();
+  setSyncState(Sync.configured() ? "ok" : "off");
+  toast(`已上传 ${done} 个文件${skipped ? `，跳过 ${skipped} 个不支持的` : ""}`);
+  if ((location.hash || "").startsWith("#/kb")) renderKb(folderId);
+}
+
 function renderKb(folderId) {
   document.body.classList.remove("detail-mode");
   setNav("kb");
@@ -517,18 +587,18 @@ function renderKb(folderId) {
   const { folders, notes } = KbStore.children(folderId);
   const crumbs = KbStore.crumbs(folderId);
   const crumbHtml = `<a href="#/kb" class="crumb">知识库</a>` +
-    crumbs.map(c => ` <span class="crumb-sep">/</span> <a href="#/kb/f/${c.id}" class="crumb">${esc(c.name)}</a>`).join("");
+    crumbs.map(c => ` <span class="crumb-sep">/</span> <a href="#/kb/f/${c.id}" class="crumb" data-fid="${c.id}">${esc(c.name)}</a>`).join("");
 
   let grid = "";
   folders.forEach(f => {
-    grid += `<div class="kb-card folder" data-fid="${f.id}">
+    grid += `<div class="kb-card folder" data-fid="${f.id}" draggable="true">
       <span class="kb-ic">${ICON.folder}</span>
       <div class="kb-name">${esc(f.name)}</div>
       <div class="kb-actions"><span class="kb-rename" title="重命名">${ICON.pencil}</span><span class="kb-del" title="删除">${ICON.trash}</span></div>
     </div>`;
   });
   notes.forEach(n => {
-    grid += `<div class="kb-card note" data-nid="${n.id}">
+    grid += `<div class="kb-card note" data-nid="${n.id}" draggable="true">
       <span class="kb-ic ${n.kind}">${n.kind === "pdf" ? ICON.file : ICON.note}</span>
       <div class="kb-name">${esc(n.name)}<span class="kb-kind">${n.kind.toUpperCase()}</span></div>
       <div class="kb-actions"><span class="kb-rename" title="重命名">${ICON.pencil}</span><span class="kb-del" title="删除">${ICON.trash}</span></div>
@@ -547,11 +617,11 @@ function renderKb(folderId) {
       <div class="spacer" style="flex:1"></div>
       <button class="btn" id="kbNewFolder">＋ 文件夹</button>
       <button class="btn" id="kbNewNote">＋ 笔记</button>
-      <button class="btn" id="kbUpPdf">${ICON.file} 上传 PDF</button>
+      <button class="btn" id="kbUpload">${ICON.upload} 上传文件</button>
     </div>
     <div class="kb-grid">${grid}</div>
-    <div class="footer"><span class="seal-sm">拾遗</span> · 知识库</div>
-    <input type="file" id="kbPdfInput" accept="application/pdf,.pdf" hidden />
+    <div class="footer"><span class="seal-sm">拾遗</span> · 知识库 · 可将 MD / PDF 文件直接拖入此页上传</div>
+    <input type="file" id="kbFileInput" accept="application/pdf,.pdf,.md,.markdown,.txt" multiple hidden />
   </div></div>`;
 
   document.getElementById("kbNewFolder").onclick = async () => {
@@ -562,22 +632,9 @@ function renderKb(folderId) {
     const v = await openPrompt({ title: "新建 Markdown 笔记", fields: [{ id: "name", label: "标题", placeholder: "如：TCP 三次握手" }], required: ["name"], okText: "创建" });
     if (!v) return; const n = KbStore.addNote(v.name, folderId, "md"); await syncKbIndex(); location.hash = "#/kb/n/" + n.id;
   };
-  const pdfInput = document.getElementById("kbPdfInput");
-  document.getElementById("kbUpPdf").onclick = () => pdfInput.click();
-  pdfInput.onchange = async e => {
-    const f = e.target.files[0]; if (!f) return; pdfInput.value = "";
-    if (f.type !== "application/pdf" && !/\.pdf$/i.test(f.name)) { toast("请选择 PDF 文件"); return; }
-    const name = f.name.replace(/\.pdf$/i, "");
-    const n = KbStore.addNote(name, folderId, "pdf");
-    const buf = await f.arrayBuffer();
-    await PdfDB.put("kb-" + n.id, new Blob([buf], { type: "application/pdf" }), f.name);
-    await syncKbIndex();
-    if (Sync.configured()) {
-      if (buf.byteLength > 10 * 1024 * 1024) toast("PDF 超 10MB，仅存本设备");
-      else { try { setSyncState("busy"); await Sync.writeBinary(kbPdfPath(n.id), buf, "kb pdf"); setSyncState("ok"); } catch (err) { setSyncState("err", err.message); toast("PDF 同步失败（已存本地）"); } }
-    }
-    toast(`已上传 ${f.name}`); renderKb(folderId);
-  };
+  const fileInput = document.getElementById("kbFileInput");
+  document.getElementById("kbUpload").onclick = () => fileInput.click();
+  fileInput.onchange = async e => { const fs = e.target.files; if (!fs || !fs.length) return; await importFilesToKb(folderId, fs); fileInput.value = ""; };
 
   document.querySelectorAll(".kb-card.folder").forEach(el => {
     el.onclick = e => { if (e.target.closest(".kb-actions")) return; location.hash = "#/kb/f/" + el.dataset.fid; };
@@ -600,6 +657,30 @@ function renderKb(folderId) {
       if (Sync.configured()) { try { await Sync.remove(kbMdPath(el.dataset.nid)); } catch (e) {} try { await Sync.remove(kbPdfPath(el.dataset.nid)); } catch (e) {} await syncKbIndex(); }
       toast("已删除"); renderKb(folderId);
     };
+  });
+
+  /* ---- 拖拽整理：把笔记/文件夹拖进文件夹或面包屑 ---- */
+  let kbDrag = null;
+  async function moveKbItem(id, target) {
+    if (!id || id === target) return;
+    if (!KbStore.move(id, target)) { toast("无法移动到该位置"); return; }
+    await syncKbIndex(); toast("已移动"); renderKb(folderId);
+  }
+  document.querySelectorAll(".kb-card[draggable]").forEach(el => {
+    const id = el.dataset.fid || el.dataset.nid;
+    el.addEventListener("dragstart", e => { kbDrag = id; el.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", id); });
+    el.addEventListener("dragend", () => { kbDrag = null; el.classList.remove("dragging"); document.querySelectorAll(".drop-in").forEach(x => x.classList.remove("drop-in")); });
+  });
+  document.querySelectorAll(".kb-card.folder").forEach(el => {
+    el.addEventListener("dragover", e => { if (kbDrag && kbDrag !== el.dataset.fid) { e.preventDefault(); el.classList.add("drop-in"); } });
+    el.addEventListener("dragleave", () => el.classList.remove("drop-in"));
+    el.addEventListener("drop", e => { e.preventDefault(); el.classList.remove("drop-in"); moveKbItem(kbDrag, el.dataset.fid); });
+  });
+  document.querySelectorAll(".kb-crumbs .crumb").forEach(el => {
+    const target = el.dataset.fid || null;   // 知识库根为 null
+    el.addEventListener("dragover", e => { if (kbDrag) { e.preventDefault(); el.classList.add("drop-in"); } });
+    el.addEventListener("dragleave", () => el.classList.remove("drop-in"));
+    el.addEventListener("drop", e => { e.preventDefault(); el.classList.remove("drop-in"); moveKbItem(kbDrag, target); });
   });
 }
 
@@ -631,7 +712,7 @@ function renderKbNote(nid) {
       const body = document.getElementById("pdfBody"); if (!body) return;
       if (!blob) { body.innerHTML = `<div class="empty-note"><span class="brush">缺</span><p>未找到该 PDF 文件。</p></div>`; return; }
       const url = URL.createObjectURL(blob);
-      body.innerHTML = `<iframe class="pdf-frame" src="${url}" title="${esc(n.name)}"></iframe>`;
+      body.innerHTML = `<iframe class="pdf-frame" src="${url}#toolbar=1&navpanes=0&view=FitH" title="${esc(n.name)}"></iframe>`;
       const dl = document.getElementById("dlPdf"); if (dl) dl.onclick = () => { const a = document.createElement("a"); a.href = url; a.download = n.name + ".pdf"; a.click(); };
     })();
     return;
@@ -704,6 +785,7 @@ const ResumeStore = {
   get(id) { return this.list().find(x => x.id === id); },
   add(name, kind) { const arr = this.list(); const it = { id: uid(), name, kind, created: Date.now() }; arr.push(it); this.save(arr); return it; },
   rename(id, name) { const arr = this.list(); const i = arr.findIndex(x => x.id === id); if (i >= 0) { arr[i].name = name; this.save(arr); } },
+  toggleCurrent(id) { const arr = this.list(); const it = arr.find(x => x.id === id); const make = !(it && it.current); arr.forEach(x => x.current = false); if (make && it) it.current = true; this.save(arr); return make; },
   remove(id) { this.save(this.list().filter(x => x.id !== id)); localStorage.removeItem("leetweb:resume:md:" + id); },
   getMd(id) { return localStorage.getItem("leetweb:resume:md:" + id) || ""; },
   setMd(id, md) { md && md.trim() ? localStorage.setItem("leetweb:resume:md:" + id, md) : localStorage.removeItem("leetweb:resume:md:" + id); },
@@ -721,6 +803,33 @@ async function pullResumeIndex() {
   try { const t = await Sync.readText("resume/index.json"); if (t) ResumeStore.save(JSON.parse(t)); } catch (e) {}
 }
 
+// 批量导入简历版本（支持 md 与 pdf，多文件）
+async function importFilesToResume(fileList) {
+  const files = [...fileList].filter(f => f.type === "application/pdf" || /\.(pdf|md|markdown|txt)$/i.test(f.name));
+  if (!files.length) { toast("请上传 PDF 或 Markdown 文件"); return; }
+  setSyncState("busy");
+  let last = null;
+  for (const f of files) {
+    const isPdf = f.type === "application/pdf" || /\.pdf$/i.test(f.name);
+    const name = f.name.replace(/\.(pdf|md|markdown|txt)$/i, "");
+    const it = ResumeStore.add(name, isPdf ? "pdf" : "md");
+    if (isPdf) {
+      const buf = await f.arrayBuffer();
+      await PdfDB.put("resume-" + it.id, new Blob([buf], { type: "application/pdf" }), f.name);
+      if (Sync.configured() && buf.byteLength <= 10 * 1024 * 1024) { try { await Sync.writeBinary(rsPdfPath(it.id), buf, "resume pdf"); } catch (e) {} }
+    } else {
+      const text = await f.text();
+      ResumeStore.setMd(it.id, text);
+      if (Sync.configured()) { try { await Sync.writeText(rsMdPath(it.id), text, "resume md"); } catch (e) {} }
+    }
+    last = it;
+  }
+  await syncResumeIndex();
+  setSyncState(Sync.configured() ? "ok" : "off");
+  toast(`已上传 ${files.length} 个版本`);
+  if (last) { location.hash = "#/resume/" + last.id; renderResume(last.id); }
+}
+
 function fmtDate(ts) { const d = new Date(ts); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`; }
 
 let resumeMdTimer;
@@ -728,16 +837,18 @@ function renderResume(selId) {
   document.body.classList.remove("detail-mode");
   setNav("resume");
   setTopbarVar();
-  const items = ResumeStore.list().sort((a, b) => b.created - a.created);
-  if (!selId && items.length) selId = items[0].id;
+  const items = ResumeStore.list().sort((a, b) => (b.current ? 1 : 0) - (a.current ? 1 : 0) || b.created - a.created);
+  if (!selId && items.length) selId = (items.find(x => x.current) || items[0]).id;
   const sel = selId ? ResumeStore.get(selId) : null;
 
   const sideList = items.length
     ? items.map(it => `
-      <div class="resume-item ${sel && sel.id === it.id ? "active" : ""}" data-id="${it.id}">
+      <div class="resume-item ${sel && sel.id === it.id ? "active" : ""} ${it.current ? "current" : ""}" data-id="${it.id}">
         <span class="ri-ic ${it.kind}">${it.kind === "pdf" ? ICON.file : ICON.note}</span>
-        <div class="ri-body"><div class="ri-name">${esc(it.name)}</div><div class="ri-sub">${it.kind.toUpperCase()} · ${fmtDate(it.created)}</div></div>
-        <div class="ri-actions"><span class="ri-dl" title="下载">${ICON.download}</span><span class="ri-rn" title="重命名">${ICON.pencil}</span><span class="ri-del" title="删除">${ICON.trash}</span></div>
+        <div class="ri-body"><div class="ri-name">${esc(it.name)}${it.current ? `<span class="ri-badge">当前</span>` : ""}</div><div class="ri-sub">${it.kind.toUpperCase()} · ${fmtDate(it.created)}</div></div>
+        <div class="ri-actions">
+          <span class="ri-cur ${it.current ? "on" : ""}" title="设为当前版本">${it.current ? ICON.starFill : ICON.star}</span>
+          <span class="ri-dl" title="下载">${ICON.download}</span><span class="ri-rn" title="重命名">${ICON.pencil}</span><span class="ri-del" title="删除">${ICON.trash}</span></div>
       </div>`).join("")
     : `<div class="resume-empty"><p>还没有简历。<br/>点上方按钮上传第一个版本。</p></div>`;
 
@@ -750,42 +861,25 @@ function renderResume(selId) {
       </div>
       <div class="resume-side-sub">共 ${items.length} 个版本</div>
       <div class="resume-list">${sideList}</div>
-      <input type="file" id="rsFile" accept="application/pdf,.pdf,.md,.markdown,.txt" hidden />
+      <input type="file" id="rsFile" accept="application/pdf,.pdf,.md,.markdown,.txt" multiple hidden />
     </aside>
     <main class="resume-main" id="resumeMain"></main>
   </div></div>`;
 
   const fileInput = document.getElementById("rsFile");
   document.getElementById("rsUpload").onclick = () => fileInput.click();
-  fileInput.onchange = async e => {
-    const f = e.target.files[0]; if (!f) return; fileInput.value = "";
-    const isPdf = f.type === "application/pdf" || /\.pdf$/i.test(f.name);
-    const isMd = /\.(md|markdown|txt)$/i.test(f.name);
-    if (!isPdf && !isMd) { toast("请上传 PDF 或 Markdown 文件"); return; }
-    const kind = isPdf ? "pdf" : "md";
-    const name = f.name.replace(/\.(pdf|md|markdown|txt)$/i, "");
-    const it = ResumeStore.add(name, kind);
-    if (isPdf) {
-      const buf = await f.arrayBuffer();
-      await PdfDB.put("resume-" + it.id, new Blob([buf], { type: "application/pdf" }), f.name);
-      if (Sync.configured()) {
-        if (buf.byteLength > 10 * 1024 * 1024) toast("PDF 超 10MB，仅存本设备");
-        else { try { setSyncState("busy"); await Sync.writeBinary(rsPdfPath(it.id), buf, "resume pdf"); setSyncState("ok"); } catch (err) { setSyncState("err", err.message); toast("同步失败（已存本地）"); } }
-      }
-    } else {
-      const text = await f.text();
-      ResumeStore.setMd(it.id, text);
-      if (Sync.configured()) { try { setSyncState("busy"); await Sync.writeText(rsMdPath(it.id), text, "resume md"); setSyncState("ok"); } catch (err) { setSyncState("err", err.message); } }
-    }
-    await syncResumeIndex();
-    toast(`已上传 ${f.name}`);
-    location.hash = "#/resume/" + it.id;
-    renderResume(it.id);
-  };
+  fileInput.onchange = async e => { const fs = e.target.files; if (!fs || !fs.length) return; await importFilesToResume(fs); fileInput.value = ""; };
 
   // 版本条目事件
   document.querySelectorAll(".resume-item").forEach(el => {
     el.onclick = e => { if (e.target.closest(".ri-actions")) return; location.hash = "#/resume/" + el.dataset.id; };
+    el.querySelector(".ri-cur").onclick = async e => {
+      e.stopPropagation();
+      const on = ResumeStore.toggleCurrent(el.dataset.id);
+      await syncResumeIndex();
+      toast(on ? "已设为当前版本" : "已取消当前标记");
+      renderResume(sel ? sel.id : null);
+    };
     el.querySelector(".ri-dl").onclick = e => { e.stopPropagation(); downloadResume(el.dataset.id); };
     el.querySelector(".ri-rn").onclick = async e => {
       e.stopPropagation(); const it = ResumeStore.get(el.dataset.id);
@@ -815,9 +909,11 @@ function renderResumeMain(sel) {
   if (sel.kind === "pdf") {
     main.innerHTML = `
       <div class="resume-bar"><span class="rb-title">${esc(sel.name)}</span><div class="spacer" style="flex:1"></div>
+        <button class="btn" id="rbFull">${ICON.expand} 全屏</button>
         <button class="btn" id="rbDl">${ICON.download} 下载</button></div>
-      <div class="resume-view" id="rsView"><div class="empty-note"><span class="spin"></span><p style="margin-top:12px">正在载入…</p></div></div>`;
+      <div class="resume-view pdf" id="rsView"><div class="empty-note"><span class="spin"></span><p style="margin-top:12px">正在载入…</p></div></div>`;
     document.getElementById("rbDl").onclick = () => downloadResume(sel.id);
+    document.getElementById("rbFull").onclick = () => toggleFullscreen(main);
     (async () => {
       let blob = null;
       const local = await PdfDB.get("resume-" + sel.id);
@@ -826,7 +922,7 @@ function renderResumeMain(sel) {
       const view = document.getElementById("rsView"); if (!view) return;
       if (!blob) { view.innerHTML = `<div class="empty-note"><span class="brush">缺</span><p>未找到该 PDF 文件。</p></div>`; return; }
       const url = URL.createObjectURL(blob);
-      view.innerHTML = `<iframe class="pdf-frame" src="${url}" title="${esc(sel.name)}"></iframe>`;
+      view.innerHTML = `<iframe class="pdf-frame" src="${url}#toolbar=0&navpanes=0&view=FitH" title="${esc(sel.name)}"></iframe>`;
     })();
     return;
   }
@@ -839,10 +935,11 @@ function renderResumeMain(sel) {
       <span class="rb-title" style="margin-left:14px">${esc(sel.name)}</span>
       <div class="spacer" style="flex:1"></div>
       <span class="save-hint" id="rsHint">自动保存</span>
+      <button class="btn" id="rbFull">${ICON.expand} 全屏</button>
       <button class="btn" id="rbDl">${ICON.download} .md</button>
       <button class="btn primary" id="rsSave">${ICON.save} 保存</button>
     </div>
-    <div class="resume-view" id="rsBody">
+    <div class="resume-view md" id="rsBody">
       <div id="rsEdit" style="display:none; height:100%; padding:clamp(22px,4vw,52px);"><textarea class="editor" id="rsEditor" placeholder="# ${esc(sel.name)}\n\n用 Markdown 书写简历…">${esc(md)}</textarea></div>
       <div id="rsMdView" style="height:100%; overflow-y:auto; padding:clamp(28px,5vw,64px);"></div>
     </div>`;
@@ -869,6 +966,7 @@ function renderResumeMain(sel) {
   editor.onkeydown = e => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); persist(true); } };
   document.getElementById("rsSave").onclick = () => persist(true);
   document.getElementById("rbDl").onclick = () => downloadResume(sel.id);
+  document.getElementById("rbFull").onclick = () => toggleFullscreen(document.getElementById("resumeMain"));
   document.querySelectorAll("#rsSeg button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
   setMode(md.trim() ? "view" : "edit");
   if (Sync.configured()) {
@@ -898,9 +996,54 @@ async function downloadResume(id) {
   toast("已下载 " + it.name);
 }
 
+/* =========================================================
+   全局拖拽上传：知识库 / 简历 页面可直接拖入文件
+   ========================================================= */
+function dndContext() {
+  const h = location.hash || "#/";
+  if (/^#\/kb\/n\//.test(h)) return null;                       // 笔记详情页不接管
+  const kf = h.match(/^#\/kb\/f\/([\w-]+)/);
+  if (kf) return { type: "kb", folder: kf[1], label: "松开：上传到当前文件夹" };
+  if (/^#\/kb\b/.test(h) || h === "#/kb") return { type: "kb", folder: null, label: "松开：上传到知识库根目录" };
+  if (/^#\/resume/.test(h)) return { type: "resume", label: "松开：添加为简历版本" };
+  return null;
+}
+function initGlobalDnd() {
+  const overlay = document.createElement("div");
+  overlay.className = "drop-overlay";
+  overlay.innerHTML = `<div class="drop-inner"><div class="drop-ic">⇪</div><p id="dropMsg">松开以上传</p><small>支持 Markdown 与 PDF · 可多选</small></div>`;
+  document.body.appendChild(overlay);
+  const msg = () => document.getElementById("dropMsg");
+  let depth = 0;
+  const hasFiles = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+
+  window.addEventListener("dragenter", e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); depth++;
+    const c = dndContext();
+    overlay.classList.add("show");
+    overlay.classList.toggle("deny", !c);
+    msg().textContent = c ? c.label : "仅「知识库」与「简历」页支持拖拽上传";
+  });
+  window.addEventListener("dragover", e => { if (overlay.classList.contains("show")) e.preventDefault(); });
+  window.addEventListener("dragleave", e => { if (!hasFiles(e)) return; depth--; if (depth <= 0) { depth = 0; overlay.classList.remove("show"); } });
+  window.addEventListener("drop", async e => {
+    if (!overlay.classList.contains("show")) return;
+    e.preventDefault(); depth = 0; overlay.classList.remove("show");
+    const c = dndContext();
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (!c || !files || !files.length) return;
+    if (c.type === "kb") await importFilesToKb(c.folder, files);
+    else await importFilesToResume(files);
+  });
+}
+
 /* ---------- 首次登录后拉取各模块目录 ---------- */
 async function moduleInitialPull() {
   await pullCustomIndex();
   await pullKbIndex();
   await pullResumeIndex();
 }
+
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initGlobalDnd);
+else initGlobalDnd();

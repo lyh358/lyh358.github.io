@@ -123,5 +123,14 @@ const PdfDB = {
       tx.objectStore("pdf").delete(String(id));
       tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
     });
+  },
+  async all() {
+    const db = await this._open();
+    return new Promise((res, rej) => {
+      const out = [];
+      const rq = db.transaction("pdf", "readonly").objectStore("pdf").openCursor();
+      rq.onsuccess = () => { const c = rq.result; if (c) { out.push({ key: c.key, blob: c.value.blob, name: c.value.name }); c.continue(); } else res(out); };
+      rq.onerror = () => rej(rq.error);
+    });
   }
 };
