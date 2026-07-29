@@ -24,6 +24,7 @@ const ICON = {
   pencil:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
   expand:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3"/></svg>',
   compress:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3m8 0v-3a2 2 0 0 1 2-2h3"/></svg>',
+  bulb:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z"/></svg>',
 };
 
 /* ---------- 主题 ---------- */
@@ -57,32 +58,69 @@ function toast(msg) {
   toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2000);
 }
 
-/* ---------- GitHub 同步：状态指示 + 推送封装 ---------- */
+/* ---------- GitHub 同步：状态指示 + 待补传队列 ---------- */
+function markSynced() { localStorage.setItem("leetweb:lastSync", String(Date.now())); }
+function lastSyncText() {
+  const t = parseInt(localStorage.getItem("leetweb:lastSync") || "0", 10);
+  if (!t) return "尚未同步";
+  const d = Date.now() - t;
+  if (d < 60000) return "刚刚";
+  if (d < 3600000) return Math.floor(d / 60000) + " 分钟前";
+  if (d < 86400000) return Math.floor(d / 3600000) + " 小时前";
+  return new Date(t).toLocaleString();
+}
+
+// 待补传队列（会话内，按逻辑键去重；联网后自动重试）
+const PendingSync = {
+  map: new Map(),                       // key -> { label, fn }
+  add(key, label, fn) { this.map.set(key, { label, fn }); refreshSyncUi(); },
+  clear(key) { this.map.delete(key); },
+  count() { return this.map.size; },
+  labels() { return [...this.map.values()].map(v => v.label); },
+  async flush() {
+    if (!Sync.configured() || !this.map.size) return;
+    setSyncState("busy");
+    for (const [key, { fn }] of [...this.map]) {
+      try { await fn(); this.map.delete(key); } catch (e) { break; }   // 仍失败则停下，等下次
+    }
+    if (this.map.size === 0) markSynced();
+    refreshSyncUi();
+  },
+};
+
 function setSyncState(state, msg) {
   const dot = document.getElementById("syncDot");
   if (!dot) return;
-  dot.className = "sync-dot " + state; // off / ok / err / busy
-  const titles = { off: "未连接 GitHub（点击设置）", ok: "已与 GitHub 同步", busy: "同步中…", err: "同步失败：" + (msg || "") };
+  if (state === "ok" && PendingSync.count() > 0) state = "pending";
+  dot.className = "sync-dot " + state; // off / ok / busy / err / pending
   const btn = document.getElementById("syncBtn");
+  const titles = {
+    off: "未连接 GitHub（点击设置）", busy: "同步中…", err: "同步失败：" + (msg || ""),
+    ok: "已同步 · " + lastSyncText(), pending: PendingSync.count() + " 项待补传（联网后自动，点此查看）",
+  };
   if (btn) btn.title = titles[state] || "GitHub 同步";
 }
-function refreshSyncDot() { setSyncState(Sync.configured() ? "ok" : "off"); }
+function refreshSyncUi() { setSyncState(Sync.configured() ? (PendingSync.count() ? "pending" : "ok") : "off"); }
+function refreshSyncDot() { refreshSyncUi(); }
 
-// 保存笔记：先本地，再推 GitHub
-async function saveNoteEverywhere(id, md) {
-  Store.setNote(id, md);
-  if (Sync.configured()) {
-    try { setSyncState("busy"); await Sync.pushNote(id, md); setSyncState("ok"); }
-    catch (e) { setSyncState("err", e.message); toast("GitHub 同步失败：" + e.message); return false; }
-  }
-  return true;
+// 执行一次同步操作；失败则入队，联网后自动补传
+async function trySync(key, label, fn) {
+  if (!Sync.configured()) return true;
+  try { setSyncState("busy"); await fn(); PendingSync.clear(key); markSynced(); refreshSyncUi(); return true; }
+  catch (e) { PendingSync.add(key, label, fn); refreshSyncUi(); return false; }
 }
+
 // 状态/收藏变化：推 meta.json
 async function pushMetaSafe() {
-  if (!Sync.configured()) return;
-  try { setSyncState("busy"); await Sync.pushMeta(); setSyncState("ok"); }
-  catch (e) { setSyncState("err", e.message); toast("GitHub 同步失败：" + e.message); }
+  await trySync("meta", "进度与收藏", () => Sync.pushMeta());
 }
+
+window.addEventListener("online", () => {
+  if (Sync.configured() && PendingSync.count()) {
+    toast("网络恢复，正在补传…");
+    PendingSync.flush().then(() => { if (!PendingSync.count()) toast("已全部补传完成"); });
+  }
+});
 // 某题是否存在笔记（本地或远端）
 function noteExists(id) { return Store.hasNote(id) || Sync.hasRemoteNote(id); }
 
@@ -95,6 +133,7 @@ function openSettings() {
     <div class="modal">
       <h3>GitHub 同步</h3>
       <p class="modal-sub">把笔记同步到你的私有仓库，多设备通用。Token 只保存在本浏览器，不会进入代码或仓库。</p>
+      ${Sync.configured() ? `<div class="sync-status-row">已连接 · 上次同步 <b>${lastSyncText()}</b>${PendingSync.count() ? ` · <span class="pending-tag">${PendingSync.count()} 项待补传</span>` : ""}</div>` : ""}
       <div class="field"><label>仓库拥有者 owner</label><input id="ghOwner" value="${c.owner||''}" placeholder="lyh358" /></div>
       <div class="field"><label>仓库名 repo</label><input id="ghRepo" value="${c.repo||''}" placeholder="leetweb-notes" /></div>
       <div class="field"><label>分支 branch</label><input id="ghBranch" value="${c.branch||'main'}" placeholder="main" /></div>
@@ -107,6 +146,7 @@ function openSettings() {
       <div class="modal-msg" id="ghMsg"></div>
       <div class="modal-actions">
         ${Sync.configured() ? '<button class="btn" id="ghDisconnect">断开</button>' : ''}
+        ${Sync.configured() ? '<button class="btn" id="ghFlush">立即同步</button>' : ''}
         <div class="spacer"></div>
         <button class="btn" id="ghCancel">取消</button>
         <button class="btn primary" id="ghSave">测试并保存</button>
@@ -123,6 +163,14 @@ function openSettings() {
   mask.querySelector("#ghCancel").onclick = close;
   const disc = mask.querySelector("#ghDisconnect");
   if (disc) disc.onclick = () => { Sync.clearCfg(); refreshSyncDot(); close(); toast("已断开 GitHub"); route(); };
+  const flushBtn = mask.querySelector("#ghFlush");
+  if (flushBtn) flushBtn.onclick = async () => {
+    if (!PendingSync.count()) { toast("已是最新，无待补传"); return; }
+    flushBtn.innerHTML = '<span class="spin"></span> 补传中…'; flushBtn.disabled = true;
+    await PendingSync.flush();
+    toast(PendingSync.count() ? `仍有 ${PendingSync.count()} 项未成功（检查网络/Token）` : "已全部补传");
+    close(); openSettings();
+  };
 
   mask.querySelector("#ghSave").onclick = async () => {
     const cfg = {
@@ -141,6 +189,7 @@ function openSettings() {
       msg.className = "modal-msg ok"; msg.textContent = "连接成功，正在拉取云端笔记…";
       setSyncState("busy");
       await Sync.initialPull();
+      markSynced();
       setSyncState("ok");
       toast("GitHub 已连接");
       close(); route();
@@ -220,9 +269,10 @@ let filterState = { cat: "全部", diff: 0, star: false, q: "" };
 function renderList() {
   document.body.classList.remove("detail-mode");
   const st = Store.stats();
-  const pct = Math.round(st.solved / st.total * 100);
+  const done = st.solved + st.review;              // 已解决 + 待复习 都计入进度
+  const pct = Math.round(done / st.total * 100);
   const circ = 2 * Math.PI * 52;
-  const offset = circ * (1 - st.solved / st.total);
+  const offset = circ * (1 - done / st.total);
 
   app.innerHTML = `
   <div class="view">
@@ -237,7 +287,7 @@ function renderList() {
               <circle class="ring-fg" cx="59" cy="59" r="52"
                 stroke-dasharray="${circ}" stroke-dashoffset="${offset}"></circle>
             </svg>
-            <div class="ring-text"><b>${pct}%</b><span>已解决</span></div>
+            <div class="ring-text"><b>${pct}%</b><span>进度</span></div>
           </div>
           <div class="stat-group">
             <div class="stat solved"><b>${st.solved}</b><span>已解决</span></div>
@@ -300,16 +350,16 @@ function renderCategories() {
     if (!items.length) return;
     const idx = String(i + 1).padStart(2, "0");
     const catAll = PROBLEMS.filter(p => p.cat === cat);
-    const catSolved = catAll.filter(p => Store.getStatus(p.id) === 1).length;
-    const catPct = Math.round(catSolved / catAll.length * 100);
+    const catDone = catAll.filter(p => { const s = Store.getStatus(p.id); return s === 1 || s === 2; }).length;
+    const catPct = Math.round(catDone / catAll.length * 100);
     html += `
       <section class="category">
         <div class="category-head">
           <span class="idx">${idx}</span>
           <h2>${cat}</h2>
-          <div class="cat-prog" title="${catSolved}/${catAll.length} 已解决">
+          <div class="cat-prog" title="${catDone}/${catAll.length}（已解决 + 待复习）">
             <div class="cat-prog-bar"><span style="width:${catPct}%"></span></div>
-            <span class="cat-prog-num">${catSolved}/${catAll.length}</span>
+            <span class="cat-prog-num">${catDone}/${catAll.length}</span>
           </div>
           <span class="count">${items.length} 题</span>
         </div>
@@ -349,6 +399,7 @@ function cardHtml(p) {
         </div>
       </div>
       <div class="pc-icons">
+        ${Store.getStatus(p.id) === 2 ? `<span class="review-mark" title="待复习">${ICON.bulb}</span>` : ""}
         ${noted ? `<span class="note-on" title="已有笔记">${ICON.note}</span>` : ""}
         <span class="star-toggle ${starred?'on':''}" title="收藏">${starred ? ICON.starFill : ICON.star}</span>
       </div>
@@ -358,302 +409,32 @@ function cardHtml(p) {
 /* =========================================================
    详情页
    ========================================================= */
-let saveTimer, descTimer;
 function renderDetail(id) {
   const p = PROBLEM_BY_ID[id];
-  if (!p) { location.hash = "#/"; return; }
-  document.body.classList.add("detail-mode");
-  setTopbarVar();
+  if (!p) { location.hash = "#/hot100"; return; }
+  setNav("hot100");
   const lcUrl = `https://leetcode.cn/problems/${p.slug}/`;
-  const note = Store.getNote(id);
-  const desc = Store.getDesc(id);
-  const status = Store.getStatus(id);
-  const starred = Store.isStarred(id);
-
-  app.innerHTML = `
-  <div class="view">
-    <div class="detail">
-      <!-- 左：题目描述（可编辑/预览）-->
-      <div class="pane left">
-        <div class="pane-head">
-          <span class="back-btn" onclick="location.hash='#/hot100'">${ICON.back} 返回</span>
-          <div class="seg" id="descSeg">
-            <button data-mode="edit">编辑</button>
-            <button data-mode="view" class="active">预览</button>
-          </div>
-          <div class="spacer"></div>
-          <span class="save-hint" id="descHint">题面自动保存</span>
-        </div>
-        <div class="pane-body" style="padding:0; display:flex; flex-direction:column;">
-          <div class="prob-header">
-            <h1 class="detail-title">${p.title}</h1>
-            <div class="detail-meta">
-              <span class="tag d${p.diff}">${DIFF_TEXT[p.diff]}</span>
-              <span class="tag">${p.cat}</span>
-              <span class="tag">#${p.id}</span>
-              <a class="lc-link sm" href="${lcUrl}" target="_blank" rel="noopener">${ICON.external} LeetCode 原题</a>
-            </div>
-          </div>
-          <div id="descEdit" style="flex:1; display:none; flex-direction:column; padding:clamp(18px,2.5vw,30px);">
-            <textarea class="editor" id="descEditor" placeholder="在此写下或粘贴题目描述（支持 Markdown）。\n也可以用下方按钮上传整理好的 .md，或上传 PDF 题面。">${escapeHtml(desc)}</textarea>
-          </div>
-          <div id="descView" style="flex:1; overflow-y:auto; padding:clamp(18px,2.5vw,30px);"></div>
-        </div>
-        <div class="pane-foot">
-          <button class="btn" id="upDescMd">${ICON.upload} 上传 MD</button>
-          <button class="btn" id="upDescPdf">${ICON.file} 上传 PDF</button>
-          <button class="btn" id="rmPdf" style="display:none;">${ICON.trash} 移除 PDF</button>
-          <div class="spacer"></div>
-          <button class="btn primary" id="saveDesc">${ICON.save} 保存</button>
-        </div>
-        <input type="file" id="descMdFile" accept=".md,.markdown,.txt" hidden />
-        <input type="file" id="descPdfFile" accept="application/pdf,.pdf" hidden />
-      </div>
-
-      <!-- 右：笔记 -->
-      <div class="pane right">
-        <div class="pane-head">
-          <div class="seg" id="modeSeg">
-            <button data-mode="edit" class="active">编辑</button>
-            <button data-mode="view">预览</button>
-          </div>
-          <span class="label note-label">笔记</span>
-          <div class="spacer"></div>
-          <span class="save-hint" id="saveHint">自动保存</span>
-          <select class="status-select" id="statusSel">
-            <option value="0" ${status===0?'selected':''}>○ 未开始</option>
-            <option value="1" ${status===1?'selected':''}>✓ 已解决</option>
-            <option value="2" ${status===2?'selected':''}>↻ 待复习</option>
-          </select>
-          <button class="btn star-detail ${starred?'primary':''}" id="starDetail" title="收藏">
-            ${starred ? ICON.starFill : ICON.star}
-          </button>
-        </div>
-        <div class="pane-body" style="padding:0; display:flex; flex-direction:column;">
-          <div id="editWrap" style="flex:1; display:flex; flex-direction:column; padding:clamp(20px,3vw,36px);">
-            <textarea class="editor" id="editor" placeholder="# 思路\n\n在此写下你的解题笔记，支持 Markdown 语法…\n\n- 关键思路\n- 复杂度分析\n\n\`\`\`java\n// 你的代码\n\`\`\`">${escapeHtml(note)}</textarea>
-          </div>
-          <div id="viewWrap" style="flex:1; overflow-y:auto; padding:clamp(20px,3vw,36px); display:none;"></div>
-        </div>
-        <div class="pane-foot">
-          <button class="btn" id="uploadMd">${ICON.upload} 上传 .md</button>
-          <button class="btn" id="downloadMd">${ICON.download} 下载 .md</button>
-          <div class="spacer"></div>
-          <button class="btn primary" id="saveBtn">${ICON.save} 保存</button>
-        </div>
-        <input type="file" id="mdFile" accept=".md,.markdown,.txt" hidden />
-      </div>
-    </div>
-  </div>`;
-
-  /* ---------------- 左栏：题目描述 ---------------- */
-  const descEditor = document.getElementById("descEditor");
-  const descEdit = document.getElementById("descEdit");
-  const descView = document.getElementById("descView");
-  const descHint = document.getElementById("descHint");
-  let pdfUrl = null, pdfName = null;
-
-  function flashHint(el, text) {
-    el.textContent = text; el.classList.add("show");
-    setTimeout(() => { el.classList.remove("show"); el.textContent = el === descHint ? "题面自动保存" : "自动保存"; }, 1600);
-  }
-  function renderDescView() {
-    const parts = [];
-    if (pdfUrl) parts.push(`<div class="pdf-wrap"><iframe class="pdf-frame" src="${pdfUrl}" title="PDF 题面"></iframe></div>`);
-    const md = descEditor.value;
-    if (md.trim()) parts.push(`<div class="markdown">${renderMarkdown(md)}</div>`);
-    if (!parts.length) { descView.innerHTML = `<div class="empty-note"><span class="brush">题</span><p>还没有题目描述。<br/>切到「编辑」写下，或上传 MD / PDF 题面。</p></div>`; return; }
-    descView.innerHTML = parts.join("");
-    descView.querySelectorAll("pre code").forEach(b => { try { hljs.highlightElement(b); } catch (e) {} });
-  }
-  function setDescMode(mode) {
-    document.querySelectorAll("#descSeg button").forEach(x => x.classList.toggle("active", x.dataset.mode === mode));
-    if (mode === "view") { renderDescView(); descEdit.style.display = "none"; descView.style.display = "block"; }
-    else { descEdit.style.display = "flex"; descView.style.display = "none"; }
-  }
-  async function persistDesc(showToast) {
-    Store.setDesc(id, descEditor.value);
-    flashHint(descHint, Sync.configured() ? "同步中…" : "已保存");
-    if (Sync.configured()) {
-      try { setSyncState("busy"); await Sync.pushDesc(id, descEditor.value); setSyncState("ok"); flashHint(descHint, "已同步"); }
-      catch (e) { setSyncState("err", e.message); toast("题面同步失败：" + e.message); return; }
-    }
-    if (showToast) toast("题目描述已保存");
-  }
-  descEditor.oninput = () => { clearTimeout(descTimer); descTimer = setTimeout(() => persistDesc(false), 800); };
-  descEditor.onkeydown = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); persistDesc(true); } };
-  document.getElementById("saveDesc").onclick = () => persistDesc(true);
-  document.querySelectorAll("#descSeg button").forEach(b => b.onclick = () => setDescMode(b.dataset.mode));
-  setDescMode(desc.trim() ? "view" : "edit");
-
-  // 上传描述 MD
-  const descMdFile = document.getElementById("descMdFile");
-  document.getElementById("upDescMd").onclick = () => descMdFile.click();
-  descMdFile.onchange = (e) => {
-    const f = e.target.files[0]; if (!f) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (descEditor.value.trim() && !confirm("当前已有描述内容，上传的文件将覆盖它，确定继续？")) { descMdFile.value = ""; return; }
-      descEditor.value = reader.result; persistDesc(true); setDescMode("view"); toast(`已导入 ${f.name}`); descMdFile.value = "";
-    };
-    reader.readAsText(f);
-  };
-
-  // PDF：展示 / 上传 / 移除
-  const rmPdfBtn = document.getElementById("rmPdf");
-  function showPdf(blob, name) {
-    if (pdfUrl) URL.revokeObjectURL(pdfUrl);
-    pdfUrl = URL.createObjectURL(blob); pdfName = name || "题面.pdf";
-    rmPdfBtn.style.display = "";
-    setDescMode("view");
-  }
-  function hidePdf() {
-    if (pdfUrl) URL.revokeObjectURL(pdfUrl);
-    pdfUrl = null; pdfName = null; rmPdfBtn.style.display = "none"; renderDescView();
-  }
-  const descPdfFile = document.getElementById("descPdfFile");
-  document.getElementById("upDescPdf").onclick = () => descPdfFile.click();
-  descPdfFile.onchange = async (e) => {
-    const f = e.target.files[0]; if (!f) return; descPdfFile.value = "";
-    if (f.type !== "application/pdf" && !/\.pdf$/i.test(f.name)) { toast("请选择 PDF 文件"); return; }
-    const buf = await f.arrayBuffer();
-    await PdfDB.put(id, new Blob([buf], { type: "application/pdf" }), f.name);
-    showPdf(new Blob([buf], { type: "application/pdf" }), f.name);
-    toast(`已加载 ${f.name}`);
-    if (Sync.configured()) {
-      if (buf.byteLength > 10 * 1024 * 1024) { toast("PDF 超过 10MB，仅保存在本设备，未上传 GitHub"); return; }
-      try { setSyncState("busy"); await Sync.pushPdf(id, buf); setSyncState("ok"); toast("PDF 已同步到 GitHub"); }
-      catch (err) { setSyncState("err", err.message); toast("PDF 同步失败（已存本地）：" + err.message); }
-    }
-  };
-  rmPdfBtn.onclick = async () => {
-    if (!confirm("确定移除这道题的 PDF 题面？")) return;
-    hidePdf(); await PdfDB.del(id);
-    if (Sync.configured()) { try { await Sync.deletePdf(id); } catch (e) {} }
-    toast("已移除 PDF");
-  };
-
-  // 载入本题 PDF（本地优先，其次云端）
-  (async () => {
-    try {
-      const local = await PdfDB.get(id);
-      if (local && local.blob) { showPdf(local.blob, local.name); return; }
-      if (Sync.configured()) {
-        const blob = await Sync.pullPdf(id);
-        if (blob) { await PdfDB.put(id, blob, `${id}.pdf`); showPdf(blob, `${id}.pdf`); }
-      }
-    } catch (e) { /* 忽略 PDF 载入错误 */ }
-  })();
-
-  // 云端拉取题目描述（用户未改动时覆盖）
-  if (Sync.configured()) {
-    const descAtOpen = desc;
-    Sync.pullDesc(id).then(remote => {
-      if (remote != null && remote !== descEditor.value && descEditor.value === descAtOpen) {
-        descEditor.value = remote; Store.setDesc(id, remote);
-        if (document.querySelector("#descSeg button.active")?.dataset.mode === "view") renderDescView();
-      }
-    }).catch(() => {});
-  }
-
-  /* ---------------- 右栏：笔记 ---------------- */
-  const editor = document.getElementById("editor");
-  const editWrap = document.getElementById("editWrap");
-  const viewWrap = document.getElementById("viewWrap");
-  const saveHint = document.getElementById("saveHint");
-
-  async function persist(showToast) {
-    saveHint.textContent = Sync.configured() ? "同步中…" : "已保存";
-    saveHint.classList.add("show");
-    const ok = await saveNoteEverywhere(id, editor.value);
-    saveHint.textContent = ok ? (Sync.configured() ? "已同步" : "已保存") : "同步失败";
-    setTimeout(() => { saveHint.textContent = "自动保存"; saveHint.classList.remove("show"); }, 1600);
-    if (showToast && ok) toast(Sync.configured() ? "已保存并同步到 GitHub" : "笔记已保存");
-  }
-  // 自动保存（输入后 800ms）
-  editor.oninput = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => persist(false), 800); };
-  document.getElementById("saveBtn").onclick = () => persist(true);
-
-  // 若已连接 GitHub，进入时拉取云端笔记（仅在用户尚未改动时覆盖）
-  if (Sync.configured()) {
-    const localAtOpen = note;
-    setSyncState("busy");
-    Sync.pullNote(id).then(remote => {
-      setSyncState("ok");
-      if (remote != null && remote !== editor.value && editor.value === localAtOpen) {
-        editor.value = remote;
-        Store.setNote(id, remote);
-        if (document.querySelector("#modeSeg button.active")?.dataset.mode === "view") renderMarkdownInto(viewWrap, remote);
-        saveHint.textContent = "已载入云端笔记"; saveHint.classList.add("show");
-        setTimeout(() => { saveHint.textContent = "自动保存"; saveHint.classList.remove("show"); }, 1600);
-      }
-    }).catch(e => setSyncState("err", e.message));
-  }
-
-  // Ctrl/Cmd+S 保存
-  editor.onkeydown = (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); persist(true); }
-  };
-
-  // 模式切换
-  function setNoteMode(mode) {
-    document.querySelectorAll("#modeSeg button").forEach(x => x.classList.toggle("active", x.dataset.mode === mode));
-    if (mode === "view") {
-      const md = editor.value;
-      if (md.trim()) renderMarkdownInto(viewWrap, md);
-      else viewWrap.innerHTML = `<div class="empty-note"><span class="brush">墨</span><p>暂无笔记，切到「编辑」写下第一笔。</p></div>`;
-      editWrap.style.display = "none";
-      viewWrap.style.display = "block";
-    } else {
-      editWrap.style.display = "flex";
-      viewWrap.style.display = "none";
-    }
-  }
-  document.querySelectorAll("#modeSeg button").forEach(b => b.onclick = () => setNoteMode(b.dataset.mode));
-  // 默认：有内容显示预览，空白显示编辑
-  setNoteMode(note.trim() ? "view" : "edit");
-
-  // 状态
-  document.getElementById("statusSel").onchange = (e) => {
-    Store.setStatus(id, parseInt(e.target.value, 10));
-    toast("状态已更新");
-    pushMetaSafe();
-  };
-
-  // 收藏
-  document.getElementById("starDetail").onclick = (e) => {
-    const on = Store.toggleStar(id);
-    e.currentTarget.classList.toggle("primary", on);
-    e.currentTarget.innerHTML = on ? ICON.starFill : ICON.star;
-    pushMetaSafe();
-  };
-
-  // 上传 md
-  const mdFile = document.getElementById("mdFile");
-  document.getElementById("uploadMd").onclick = () => mdFile.click();
-  mdFile.onchange = (e) => {
-    const f = e.target.files[0]; if (!f) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const existing = editor.value.trim();
-      if (existing && !confirm("当前已有笔记内容，上传的文件将覆盖它，确定继续？")) { mdFile.value=""; return; }
-      editor.value = reader.result;
-      persist(true);
-      toast(`已导入 ${f.name}`);
-      mdFile.value = "";
-    };
-    reader.readAsText(f);
-  };
-
-  // 下载 md
-  document.getElementById("downloadMd").onclick = () => {
-    const blob = new Blob([editor.value], { type: "text/markdown;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${p.id}-${p.slug}.md`;
-    a.click(); URL.revokeObjectURL(a.href);
-    toast("已下载 Markdown 文件");
-  };
+  // 复用通用双栏编辑器（题面 + 笔记），并接入热题的难度/分类标签、原题链接、状态与收藏
+  renderEditorDetail({
+    backHref: "#/hot100",
+    key: "p" + id,
+    title: p.title,
+    noteLabel: "笔记",
+    tags: [{ text: DIFF_TEXT[p.diff], cls: "d" + p.diff }, { text: p.cat }, { text: "#" + p.id }],
+    link: { href: lcUrl },
+    status: { get: () => Store.getStatus(id), set: v => { Store.setStatus(id, v); pushMetaSafe(); } },
+    star: { get: () => Store.isStarred(id), toggle: () => { const on = Store.toggleStar(id); pushMetaSafe(); return on; } },
+    desc: {
+      get: () => Store.getDesc(id), set: md => Store.setDesc(id, md),
+      push: md => Sync.pushDesc(id, md), pushEmpty: () => Sync.pushDesc(id, ""), pull: () => Sync.pullDesc(id),
+    },
+    pdf: { localKey: id, remotePath: Sync.pdfPath(id) },
+    note: {
+      get: () => Store.getNote(id), set: md => Store.setNote(id, md),
+      push: md => Sync.pushNote(id, md), pushEmpty: () => Sync.pushNote(id, ""), pull: () => Sync.pullNote(id),
+      downloadName: `${p.id}-${p.slug}.md`,
+    },
+  });
 }
 
 function escapeHtml(s) {
@@ -695,7 +476,7 @@ function initSync() {
     setSyncState("busy");
     Sync.initialPull()
       .then(() => moduleInitialPull())
-      .then(() => { setSyncState("ok"); if (isListRoute()) route(); })
+      .then(() => { markSynced(); setSyncState("ok"); if (isListRoute()) route(); })
       .catch(e => setSyncState("err", e.message));
   }
 }

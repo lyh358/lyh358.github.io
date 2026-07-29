@@ -145,9 +145,7 @@ const cNotePath = id => `custom/${id}-note.md`;
 const cPdfPath  = id => `custom/${id}-desc.pdf`;
 
 async function syncCustomIndex() {
-  if (!Sync.configured()) return;
-  try { setSyncState("busy"); await Sync.writeText("custom/index.json", JSON.stringify(CustomStore.list(), null, 2), "update custom index"); setSyncState("ok"); }
-  catch (e) { setSyncState("err", e.message); toast("题库目录同步失败：" + e.message); }
+  await trySync("customindex", "手撕题库目录", () => Sync.writeText("custom/index.json", JSON.stringify(CustomStore.list(), null, 2), "update custom index"));
 }
 async function pullCustomIndex() {
   if (!Sync.configured()) return;
@@ -250,6 +248,7 @@ function renderCustomDetail(cid) {
   setNav("custom");
   renderEditorDetail({
     backHref: "#/custom",
+    key: "c" + cid,
     eyebrow: "手撕 · " + (it.type || "未分类"),
     title: it.title,
     tags: [{ text: it.type || "未分类" }],
@@ -304,24 +303,22 @@ function renderEditorDetail(cfg) {
     <div class="pane left">
       <div class="pane-head">
         <span class="back-btn" onclick="location.hash='${cfg.backHref}'">${ICON.back} 返回</span>
-        <div class="seg" id="descSeg"><button data-mode="edit">编辑</button><button data-mode="view" class="active">预览</button></div>
+        <span class="label" style="margin-left:14px">题面</span>
         <div class="spacer"></div>
         <span class="save-hint" id="descHint">题面自动保存</span>
       </div>
       <div class="pane-body" style="padding:0; display:flex; flex-direction:column;">
         <div class="prob-header">
           <h1 class="detail-title">${esc(cfg.title)}
-            ${cfg.onEditInfo ? `<button class="icon-btn tiny" id="editInfo" title="编辑信息">${ICON.note}</button>` : ""}
+            ${cfg.onEditInfo ? `<button class="icon-btn tiny" id="editInfo" title="编辑信息">${ICON.pencil}</button>` : ""}
           </h1>
           <div class="detail-meta">
             ${cfg.eyebrow ? `<span class="tag">${esc(cfg.eyebrow)}</span>` : ""}
+            ${(cfg.tags || []).map(t => `<span class="tag ${t.cls || ""}">${esc(t.text)}</span>`).join("")}
             ${cfg.link ? `<a class="lc-link sm" href="${cfg.link.href}" target="_blank" rel="noopener">${ICON.external} 原题</a>` : ""}
           </div>
         </div>
-        <div id="descEdit" style="flex:1; display:none; flex-direction:column; padding:clamp(18px,2.5vw,30px);">
-          <textarea class="editor" id="descEditor" placeholder="在此写下或粘贴题目描述（支持 Markdown）。&#10;也可以用下方按钮上传 .md，或上传 PDF 题面。">${esc(desc)}</textarea>
-        </div>
-        <div id="descView" style="flex:1; overflow-y:auto; padding:clamp(18px,2.5vw,30px);"></div>
+        <div id="descMount" style="flex:1; min-height:0;"></div>
       </div>
       <div class="pane-foot">
         <button class="btn" id="upDescMd">${ICON.upload} 上传 MD</button>
@@ -335,17 +332,15 @@ function renderEditorDetail(cfg) {
 
     <div class="pane right">
       <div class="pane-head">
-        <div class="seg" id="noteSeg"><button data-mode="edit" class="active">编辑</button><button data-mode="view">预览</button></div>
-        <span class="label note-label">解法笔记</span>
+        <span class="label note-label">${esc(cfg.noteLabel || "解法笔记")}</span>
         <div class="spacer"></div>
         <span class="save-hint" id="noteHint">自动保存</span>
+        ${cfg.status ? `<select class="status-select" id="statusSel"><option value="0">○ 未开始</option><option value="1">✓ 已解决</option><option value="2">↻ 待复习</option></select>` : ""}
+        ${cfg.star ? `<button class="btn star-detail" id="starDetail" title="收藏">${ICON.star}</button>` : ""}
         ${cfg.onDelete ? `<button class="btn" id="delItem" title="删除此条">${ICON.trash}</button>` : ""}
       </div>
       <div class="pane-body" style="padding:0; display:flex; flex-direction:column;">
-        <div id="noteEdit" style="flex:1; display:flex; flex-direction:column; padding:clamp(20px,3vw,36px);">
-          <textarea class="editor" id="noteEditor" placeholder="# 思路&#10;&#10;写下你的解法笔记，支持 Markdown…&#10;&#10;\`\`\`java&#10;// 代码&#10;\`\`\`">${esc(note)}</textarea>
-        </div>
-        <div id="noteView" style="flex:1; overflow-y:auto; padding:clamp(20px,3vw,36px); display:none;"></div>
+        <div id="noteMount" style="flex:1; min-height:0;"></div>
       </div>
       <div class="pane-foot">
         <button class="btn" id="upNoteMd">${ICON.upload} 上传 .md</button>
@@ -357,41 +352,31 @@ function renderEditorDetail(cfg) {
     </div>
   </div></div>`;
 
+  function flash(el, text, base) { el.textContent = text; el.classList.add("show"); setTimeout(() => { el.classList.remove("show"); el.textContent = base; }, 1600); }
+
   /* ---- 左：题面 ---- */
-  const descEditor = document.getElementById("descEditor");
-  const descEdit = document.getElementById("descEdit");
-  const descView = document.getElementById("descView");
   const descHint = document.getElementById("descHint");
   let pdfUrl = null;
-
-  function flash(el, text, base) { el.textContent = text; el.classList.add("show"); setTimeout(() => { el.classList.remove("show"); el.textContent = base; }, 1600); }
-  function renderDescView() {
-    const parts = [];
-    if (pdfUrl) parts.push(`<div class="pdf-wrap"><iframe class="pdf-frame" src="${pdfUrl}" title="PDF 题面"></iframe></div>`);
-    if (descEditor.value.trim()) parts.push(`<div class="markdown">${renderMarkdown(descEditor.value)}</div>`);
-    if (!parts.length) { descView.innerHTML = `<div class="empty-note"><span class="brush">题</span><p>还没有题目描述。<br/>切到「编辑」写下，或上传 MD / PDF。</p></div>`; return; }
-    descView.innerHTML = parts.join("");
-    descView.querySelectorAll("pre code").forEach(b => { try { hljs.highlightElement(b); } catch (e) {} });
-  }
-  function setDescMode(mode) {
-    document.querySelectorAll("#descSeg button").forEach(x => x.classList.toggle("active", x.dataset.mode === mode));
-    if (mode === "view") { renderDescView(); descEdit.style.display = "none"; descView.style.display = "block"; }
-    else { descEdit.style.display = "flex"; descView.style.display = "none"; }
-  }
   async function persistDesc(showToast) {
-    cfg.desc.set(descEditor.value);
+    cfg.desc.set(descMde.get());
     flash(descHint, Sync.configured() ? "同步中…" : "已保存", "题面自动保存");
     if (Sync.configured()) {
-      try { setSyncState("busy"); descEditor.value.trim() ? await cfg.desc.push(descEditor.value) : await cfg.desc.pushEmpty(); setSyncState("ok"); flash(descHint, "已同步", "题面自动保存"); }
-      catch (e) { setSyncState("err", e.message); toast("题面同步失败：" + e.message); return; }
+      const val = descMde.get();
+      const ok = await trySync("desc:" + cfg.key, (cfg.title || "题面") + " · 题面", () => val.trim() ? cfg.desc.push(val) : cfg.desc.pushEmpty());
+      flash(descHint, ok ? "已同步" : "待补传·联网自动", "题面自动保存");
     }
     if (showToast) toast("题面已保存");
   }
-  descEditor.oninput = () => { clearTimeout(genDescTimer); genDescTimer = setTimeout(() => persistDesc(false), 800); };
-  descEditor.onkeydown = e => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); persistDesc(true); } };
+  const descMde = createMde({
+    value: desc,
+    placeholder: "在此写下或粘贴题目描述（支持 Markdown）。\n也可以用下方按钮上传 .md，或上传 PDF 题面。",
+    mode: desc.trim() ? "view" : "edit",
+    onInput: () => { clearTimeout(genDescTimer); genDescTimer = setTimeout(() => persistDesc(false), 800); },
+    decoratePreview: () => pdfUrl ? `<div class="pdf-wrap"><iframe class="pdf-frame" src="${pdfUrl}#toolbar=1&navpanes=0&view=FitH" title="PDF 题面"></iframe></div>` : "",
+  });
+  document.getElementById("descMount").appendChild(descMde.el);
+  descMde.textarea.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); persistDesc(true); } });
   document.getElementById("saveDesc").onclick = () => persistDesc(true);
-  document.querySelectorAll("#descSeg button").forEach(b => b.onclick = () => setDescMode(b.dataset.mode));
-  setDescMode(desc.trim() ? "view" : "edit");
   if (cfg.onEditInfo) document.getElementById("editInfo").onclick = cfg.onEditInfo;
   if (cfg.onDelete) document.getElementById("delItem").onclick = cfg.onDelete;
 
@@ -400,15 +385,15 @@ function renderEditorDetail(cfg) {
   descMdFile.onchange = e => {
     const f = e.target.files[0]; if (!f) return;
     const r = new FileReader();
-    r.onload = () => { if (descEditor.value.trim() && !confirm("将覆盖当前题面，继续？")) { descMdFile.value = ""; return; } descEditor.value = r.result; persistDesc(true); setDescMode("view"); toast(`已导入 ${f.name}`); descMdFile.value = ""; };
+    r.onload = () => { if (descMde.get().trim() && !confirm("将覆盖当前题面，继续？")) { descMdFile.value = ""; return; } descMde.set(r.result); descMde.setMode("view"); persistDesc(true); toast(`已导入 ${f.name}`); descMdFile.value = ""; };
     r.readAsText(f);
   };
 
   /* ---- PDF ---- */
   if (cfg.pdf) {
     const rmPdfBtn = document.getElementById("rmPdf");
-    const showPdf = (blob) => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); pdfUrl = URL.createObjectURL(blob); rmPdfBtn.style.display = ""; setDescMode("view"); };
-    const hidePdf = () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); pdfUrl = null; rmPdfBtn.style.display = "none"; renderDescView(); };
+    const showPdf = (blob) => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); pdfUrl = URL.createObjectURL(blob); rmPdfBtn.style.display = ""; descMde.setMode("view"); descMde.refresh(); };
+    const hidePdf = () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); pdfUrl = null; rmPdfBtn.style.display = "none"; descMde.refresh(); };
     const pdfFile = document.getElementById("descPdfFile");
     document.getElementById("upDescPdf").onclick = () => pdfFile.click();
     pdfFile.onchange = async e => {
@@ -442,59 +427,61 @@ function renderEditorDetail(cfg) {
   if (Sync.configured()) {
     const at = desc;
     cfg.desc.pull().then(remote => {
-      if (remote != null && remote !== descEditor.value && descEditor.value === at) {
-        descEditor.value = remote; cfg.desc.set(remote);
-        if (document.querySelector("#descSeg button.active")?.dataset.mode === "view") renderDescView();
-      }
+      if (remote != null && remote !== descMde.get() && descMde.get() === at) { descMde.set(remote); cfg.desc.set(remote); }
     }).catch(() => {});
   }
 
   /* ---- 右：笔记 ---- */
-  const noteEditor = document.getElementById("noteEditor");
-  const noteEdit = document.getElementById("noteEdit");
-  const noteView = document.getElementById("noteView");
   const noteHint = document.getElementById("noteHint");
-
   async function persistNote(showToast) {
-    cfg.note.set(noteEditor.value);
+    cfg.note.set(noteMde.get());
     flash(noteHint, Sync.configured() ? "同步中…" : "已保存", "自动保存");
     if (Sync.configured()) {
-      try { setSyncState("busy"); noteEditor.value.trim() ? await cfg.note.push(noteEditor.value) : await cfg.note.pushEmpty(); setSyncState("ok"); flash(noteHint, "已同步", "自动保存"); }
-      catch (e) { setSyncState("err", e.message); toast("同步失败：" + e.message); return; }
+      const val = noteMde.get();
+      const ok = await trySync("note:" + cfg.key, (cfg.title || "笔记") + " · 笔记", () => val.trim() ? cfg.note.push(val) : cfg.note.pushEmpty());
+      flash(noteHint, ok ? "已同步" : "待补传·联网自动", "自动保存");
     }
     if (showToast) toast("笔记已保存");
   }
-  function setNoteMode(mode) {
-    document.querySelectorAll("#noteSeg button").forEach(x => x.classList.toggle("active", x.dataset.mode === mode));
-    if (mode === "view") { noteEditor.value.trim() ? renderMarkdownInto(noteView, noteEditor.value) : (noteView.innerHTML = `<div class="empty-note"><span class="brush">墨</span><p>暂无笔记，切到「编辑」写下第一笔。</p></div>`); noteEdit.style.display = "none"; noteView.style.display = "block"; }
-    else { noteEdit.style.display = "flex"; noteView.style.display = "none"; }
-  }
-  noteEditor.oninput = () => { clearTimeout(genNoteTimer); genNoteTimer = setTimeout(() => persistNote(false), 800); };
-  noteEditor.onkeydown = e => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); persistNote(true); } };
+  const noteMde = createMde({
+    value: note,
+    placeholder: "# 思路\n\n写下你的解法笔记，支持 Markdown…\n\n```java\n// 代码\n```",
+    mode: note.trim() ? "view" : "edit",
+    onInput: () => { clearTimeout(genNoteTimer); genNoteTimer = setTimeout(() => persistNote(false), 800); },
+  });
+  document.getElementById("noteMount").appendChild(noteMde.el);
+  noteMde.textarea.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); persistNote(true); } });
   document.getElementById("saveNote").onclick = () => persistNote(true);
-  document.querySelectorAll("#noteSeg button").forEach(b => b.onclick = () => setNoteMode(b.dataset.mode));
-  setNoteMode(note.trim() ? "view" : "edit");
+
+  if (cfg.status) {
+    const sel = document.getElementById("statusSel");
+    sel.value = String(cfg.status.get());
+    sel.onchange = e => { cfg.status.set(parseInt(e.target.value, 10)); toast("状态已更新"); };
+  }
+  if (cfg.star) {
+    const sb = document.getElementById("starDetail");
+    const paint = on => { sb.classList.toggle("primary", on); sb.innerHTML = on ? ICON.starFill : ICON.star; };
+    paint(cfg.star.get());
+    sb.onclick = () => paint(cfg.star.toggle());
+  }
 
   const noteMdFile = document.getElementById("noteMdFile");
   document.getElementById("upNoteMd").onclick = () => noteMdFile.click();
   noteMdFile.onchange = e => {
     const f = e.target.files[0]; if (!f) return;
     const r = new FileReader();
-    r.onload = () => { if (noteEditor.value.trim() && !confirm("将覆盖当前笔记，继续？")) { noteMdFile.value = ""; return; } noteEditor.value = r.result; persistNote(true); toast(`已导入 ${f.name}`); noteMdFile.value = ""; };
+    r.onload = () => { if (noteMde.get().trim() && !confirm("将覆盖当前笔记，继续？")) { noteMdFile.value = ""; return; } noteMde.set(r.result); persistNote(true); toast(`已导入 ${f.name}`); noteMdFile.value = ""; };
     r.readAsText(f);
   };
   document.getElementById("dlNoteMd").onclick = () => {
-    const blob = new Blob([noteEditor.value], { type: "text/markdown;charset=utf-8" });
+    const blob = new Blob([noteMde.get()], { type: "text/markdown;charset=utf-8" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = cfg.note.downloadName || "note.md"; a.click(); URL.revokeObjectURL(a.href);
     toast("已下载");
   };
   if (Sync.configured()) {
     const at = note;
     cfg.note.pull().then(remote => {
-      if (remote != null && remote !== noteEditor.value && noteEditor.value === at) {
-        noteEditor.value = remote; cfg.note.set(remote);
-        if (document.querySelector("#noteSeg button.active")?.dataset.mode === "view") renderMarkdownInto(noteView, remote);
-      }
+      if (remote != null && remote !== noteMde.get() && noteMde.get() === at) { noteMde.set(remote); cfg.note.set(remote); }
     }).catch(() => {});
   }
 }
@@ -542,9 +529,7 @@ const kbMdPath = id => `kb/notes/${id}.md`;
 const kbPdfPath = id => `kb/notes/${id}.pdf`;
 
 async function syncKbIndex() {
-  if (!Sync.configured()) return;
-  try { setSyncState("busy"); await Sync.writeText("kb/index.json", JSON.stringify(KbStore.load(), null, 2), "update kb index"); setSyncState("ok"); }
-  catch (e) { setSyncState("err", e.message); toast("知识库目录同步失败：" + e.message); }
+  await trySync("kbindex", "知识库目录", () => Sync.writeText("kb/index.json", JSON.stringify(KbStore.load(), null, 2), "update kb index"));
 }
 async function pullKbIndex() {
   if (!Sync.configured()) return;
@@ -718,59 +703,48 @@ function renderKbNote(nid) {
     return;
   }
 
-  // md 笔记：单栏 编辑/预览
+  // md 笔记：公共编辑器组件
   const md = KbStore.getMd(nid);
   app.innerHTML = `
   <div class="view"><div class="kb-note-page">
     <div class="pane-head">
       <span class="back-btn" onclick="location.hash='${backHref}'">${ICON.back} 返回</span>
-      <div class="seg" id="kbSeg" style="margin-left:14px"><button data-mode="edit">编辑</button><button data-mode="view" class="active">预览</button></div>
       <span class="label" style="margin-left:14px">${esc(n.name)}</span>
       <div class="spacer" style="flex:1"></div>
       <span class="save-hint" id="kbHint">自动保存</span>
       <button class="btn" id="kbDl">${ICON.download} .md</button>
       <button class="btn primary" id="kbSave">${ICON.save} 保存</button>
     </div>
-    <div class="kb-note-body">
-      <div id="kbEdit" style="display:none; height:100%; padding:clamp(22px,4vw,48px);"><textarea class="editor" id="kbEditor" placeholder="# ${esc(n.name)}\n\n在此记录知识点，支持 Markdown…">${esc(md)}</textarea></div>
-      <div id="kbView" style="height:100%; overflow-y:auto; padding:clamp(22px,4vw,48px);"></div>
-    </div>
+    <div class="kb-note-body" id="kbMount"></div>
   </div></div>`;
 
-  const editor = document.getElementById("kbEditor");
-  const editWrap = document.getElementById("kbEdit");
-  const viewWrap = document.getElementById("kbView");
   const hint = document.getElementById("kbHint");
-
-  function setMode(mode) {
-    document.querySelectorAll("#kbSeg button").forEach(x => x.classList.toggle("active", x.dataset.mode === mode));
-    if (mode === "view") { editor.value.trim() ? renderMarkdownInto(viewWrap, editor.value) : (viewWrap.innerHTML = `<div class="empty-note"><span class="brush">墨</span><p>还没有内容，切到「编辑」开始记录。</p></div>`); editWrap.style.display = "none"; viewWrap.style.display = "block"; }
-    else { editWrap.style.display = "block"; viewWrap.style.display = "none"; }
-  }
   async function persist(showToast) {
-    KbStore.setMd(nid, editor.value);
+    KbStore.setMd(nid, mde.get());
     hint.textContent = Sync.configured() ? "同步中…" : "已保存"; hint.classList.add("show");
     if (Sync.configured()) {
-      try { setSyncState("busy"); editor.value.trim() ? await Sync.writeText(kbMdPath(nid), editor.value, "kb note") : await Sync.remove(kbMdPath(nid)); setSyncState("ok"); hint.textContent = "已同步"; }
-      catch (e) { setSyncState("err", e.message); toast("同步失败：" + e.message); }
+      const val = mde.get();
+      const ok = await trySync("kbmd:" + nid, n.name, () => val.trim() ? Sync.writeText(kbMdPath(nid), val, "kb note") : Sync.remove(kbMdPath(nid)));
+      hint.textContent = ok ? "已同步" : "待补传";
     }
     setTimeout(() => { hint.textContent = "自动保存"; hint.classList.remove("show"); }, 1600);
     if (showToast) toast("已保存");
   }
-  editor.oninput = () => { clearTimeout(kbNoteTimer); kbNoteTimer = setTimeout(() => persist(false), 800); };
-  editor.onkeydown = e => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); persist(true); } };
+  const mde = createMde({
+    value: md,
+    placeholder: `# ${n.name}\n\n在此记录知识点，支持 Markdown…`,
+    mode: md.trim() ? "view" : "edit",
+    onInput: () => { clearTimeout(kbNoteTimer); kbNoteTimer = setTimeout(() => persist(false), 800); },
+  });
+  document.getElementById("kbMount").appendChild(mde.el);
+  mde.textarea.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); persist(true); } });
   document.getElementById("kbSave").onclick = () => persist(true);
-  document.getElementById("kbDl").onclick = () => { const blob = new Blob([editor.value], { type: "text/markdown;charset=utf-8" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = n.name + ".md"; a.click(); URL.revokeObjectURL(a.href); };
-  document.querySelectorAll("#kbSeg button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
-  setMode(md.trim() ? "view" : "edit");
+  document.getElementById("kbDl").onclick = () => { const blob = new Blob([mde.get()], { type: "text/markdown;charset=utf-8" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = n.name + ".md"; a.click(); URL.revokeObjectURL(a.href); };
 
   if (Sync.configured()) {
     const at = md;
     Sync.readText(kbMdPath(nid)).then(remote => {
-      if (remote != null && remote !== editor.value && editor.value === at) {
-        editor.value = remote; KbStore.setMd(nid, remote);
-        if (document.querySelector("#kbSeg button.active")?.dataset.mode === "view") renderMarkdownInto(viewWrap, remote);
-      }
+      if (remote != null && remote !== mde.get() && mde.get() === at) { mde.set(remote); KbStore.setMd(nid, remote); }
     }).catch(() => {});
   }
 }
@@ -794,9 +768,7 @@ const rsMdPath = id => `resume/${id}.md`;
 const rsPdfPath = id => `resume/${id}.pdf`;
 
 async function syncResumeIndex() {
-  if (!Sync.configured()) return;
-  try { setSyncState("busy"); await Sync.writeText("resume/index.json", JSON.stringify(ResumeStore.list(), null, 2), "update resume index"); setSyncState("ok"); }
-  catch (e) { setSyncState("err", e.message); toast("简历目录同步失败：" + e.message); }
+  await trySync("resumeindex", "简历目录", () => Sync.writeText("resume/index.json", JSON.stringify(ResumeStore.list(), null, 2), "update resume index"));
 }
 async function pullResumeIndex() {
   if (!Sync.configured()) return;
@@ -927,55 +899,45 @@ function renderResumeMain(sel) {
     return;
   }
 
-  // md 简历：预览 / 编辑
+  // md 简历：公共编辑器组件
   const md = ResumeStore.getMd(sel.id);
   main.innerHTML = `
     <div class="resume-bar">
-      <div class="seg" id="rsSeg"><button data-mode="edit">编辑</button><button data-mode="view" class="active">预览</button></div>
-      <span class="rb-title" style="margin-left:14px">${esc(sel.name)}</span>
+      <span class="rb-title">${esc(sel.name)}</span>
       <div class="spacer" style="flex:1"></div>
       <span class="save-hint" id="rsHint">自动保存</span>
       <button class="btn" id="rbFull">${ICON.expand} 全屏</button>
       <button class="btn" id="rbDl">${ICON.download} .md</button>
       <button class="btn primary" id="rsSave">${ICON.save} 保存</button>
     </div>
-    <div class="resume-view md" id="rsBody">
-      <div id="rsEdit" style="display:none; height:100%; padding:clamp(22px,4vw,52px);"><textarea class="editor" id="rsEditor" placeholder="# ${esc(sel.name)}\n\n用 Markdown 书写简历…">${esc(md)}</textarea></div>
-      <div id="rsMdView" style="height:100%; overflow-y:auto; padding:clamp(28px,5vw,64px);"></div>
-    </div>`;
-  const editor = document.getElementById("rsEditor");
-  const editWrap = document.getElementById("rsEdit");
-  const viewWrap = document.getElementById("rsMdView");
+    <div class="resume-view md" id="rsBody"></div>`;
   const hint = document.getElementById("rsHint");
-  function setMode(mode) {
-    document.querySelectorAll("#rsSeg button").forEach(x => x.classList.toggle("active", x.dataset.mode === mode));
-    if (mode === "view") { editor.value.trim() ? renderMarkdownInto(viewWrap, editor.value) : (viewWrap.innerHTML = `<div class="empty-note"><span class="brush">简</span><p>还没有内容，切到「编辑」书写。</p></div>`); editWrap.style.display = "none"; viewWrap.style.display = "block"; }
-    else { editWrap.style.display = "block"; viewWrap.style.display = "none"; }
-  }
   async function persist(showToast) {
-    ResumeStore.setMd(sel.id, editor.value);
+    ResumeStore.setMd(sel.id, mde.get());
     hint.textContent = Sync.configured() ? "同步中…" : "已保存"; hint.classList.add("show");
     if (Sync.configured()) {
-      try { setSyncState("busy"); editor.value.trim() ? await Sync.writeText(rsMdPath(sel.id), editor.value, "resume md") : await Sync.remove(rsMdPath(sel.id)); setSyncState("ok"); hint.textContent = "已同步"; }
-      catch (e) { setSyncState("err", e.message); toast("同步失败：" + e.message); }
+      const val = mde.get();
+      const ok = await trySync("rsmd:" + sel.id, sel.name, () => val.trim() ? Sync.writeText(rsMdPath(sel.id), val, "resume md") : Sync.remove(rsMdPath(sel.id)));
+      hint.textContent = ok ? "已同步" : "待补传";
     }
     setTimeout(() => { hint.textContent = "自动保存"; hint.classList.remove("show"); }, 1600);
     if (showToast) toast("已保存");
   }
-  editor.oninput = () => { clearTimeout(resumeMdTimer); resumeMdTimer = setTimeout(() => persist(false), 800); };
-  editor.onkeydown = e => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); persist(true); } };
+  const mde = createMde({
+    value: md,
+    placeholder: `# ${sel.name}\n\n用 Markdown 书写简历…`,
+    mode: md.trim() ? "view" : "edit",
+    onInput: () => { clearTimeout(resumeMdTimer); resumeMdTimer = setTimeout(() => persist(false), 800); },
+  });
+  document.getElementById("rsBody").appendChild(mde.el);
+  mde.textarea.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); persist(true); } });
   document.getElementById("rsSave").onclick = () => persist(true);
   document.getElementById("rbDl").onclick = () => downloadResume(sel.id);
   document.getElementById("rbFull").onclick = () => toggleFullscreen(document.getElementById("resumeMain"));
-  document.querySelectorAll("#rsSeg button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
-  setMode(md.trim() ? "view" : "edit");
   if (Sync.configured()) {
     const at = md;
     Sync.readText(rsMdPath(sel.id)).then(remote => {
-      if (remote != null && remote !== editor.value && editor.value === at) {
-        editor.value = remote; ResumeStore.setMd(sel.id, remote);
-        if (document.querySelector("#rsSeg button.active")?.dataset.mode === "view") renderMarkdownInto(viewWrap, remote);
-      }
+      if (remote != null && remote !== mde.get() && mde.get() === at) { mde.set(remote); ResumeStore.setMd(sel.id, remote); }
     }).catch(() => {});
   }
 }
@@ -994,6 +956,107 @@ async function downloadResume(id) {
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = it.name + ".md"; a.click(); URL.revokeObjectURL(a.href);
   }
   toast("已下载 " + it.name);
+}
+
+/* =========================================================
+   全局搜索（Cmd/Ctrl+K 命令面板）：跨模块 + 搜正文
+   ========================================================= */
+function buildSearchIndex() {
+  const idx = [];
+  PROBLEMS.forEach(p => idx.push({
+    hash: `#/p/${p.id}`, module: "热题", title: `${p.id}. ${p.title}`, sub: `${p.cat} · ${DIFF_TEXT[p.diff]}`,
+    content: Store.getDesc(p.id) + "\n" + Store.getNote(p.id),
+  }));
+  CustomStore.list().forEach(it => idx.push({
+    hash: `#/custom/${it.id}`, module: "手撕", title: it.title, sub: it.type || "",
+    content: CustomStore.getDesc(it.id) + "\n" + CustomStore.getNote(it.id),
+  }));
+  const kb = KbStore.load();
+  kb.folders.forEach(f => idx.push({ hash: `#/kb/f/${f.id}`, module: "知识库·文件夹", title: f.name, sub: "", content: "" }));
+  kb.notes.forEach(n => idx.push({
+    hash: `#/kb/n/${n.id}`, module: "知识库", title: n.name, sub: n.kind.toUpperCase(),
+    content: n.kind === "md" ? KbStore.getMd(n.id) : "",
+  }));
+  ResumeStore.list().forEach(r => idx.push({
+    hash: `#/resume/${r.id}`, module: "简历", title: r.name, sub: r.kind.toUpperCase(),
+    content: r.kind === "md" ? ResumeStore.getMd(r.id) : "",
+  }));
+  return idx;
+}
+function _snippet(text, i, len) {
+  const start = Math.max(0, i - 30);
+  return (start > 0 ? "…" : "") + text.slice(start, i + len + 50).replace(/\s+/g, " ").trim() + "…";
+}
+function searchIndex(idx, q) {
+  q = q.trim().toLowerCase();
+  if (!q) return [];
+  const res = [];
+  for (const e of idx) {
+    const title = e.title.toLowerCase(), sub = (e.sub || "").toLowerCase(), content = (e.content || "").toLowerCase();
+    let score = -1, snippet = "";
+    if (title.includes(q)) score = 0;
+    else if (sub.includes(q)) score = 1;
+    else { const i = content.indexOf(q); if (i >= 0) { score = 2; snippet = _snippet(e.content, i, q.length); } }
+    if (score >= 0) res.push({ e, score, snippet });
+  }
+  res.sort((a, b) => a.score - b.score || a.e.title.length - b.e.title.length);
+  return res.slice(0, 40);
+}
+function _hl(text, q) {
+  const i = (text || "").toLowerCase().indexOf(q);
+  if (i < 0) return esc(text);
+  return esc(text.slice(0, i)) + "<mark>" + esc(text.slice(i, i + q.length)) + "</mark>" + esc(text.slice(i + q.length));
+}
+function openSearch() {
+  if (document.querySelector(".search-mask")) return;
+  const idx = buildSearchIndex();
+  const mask = document.createElement("div");
+  mask.className = "modal-mask search-mask";
+  mask.innerHTML = `<div class="search-box">
+    <div class="sk-input"><span class="sk-ic">${ICON.search}</span><input id="skInput" placeholder="搜索题目 / 笔记 / 知识库 / 简历…" autocomplete="off" spellcheck="false"></div>
+    <div class="sk-results" id="skResults"><div class="sk-hint">输入关键词开始搜索 · 支持搜正文</div></div>
+    <div class="sk-foot"><span>↑ ↓ 选择</span><span>↵ 打开</span><span>Esc 关闭</span></div>
+  </div>`;
+  document.body.appendChild(mask);
+  const input = mask.querySelector("#skInput");
+  const resultsEl = mask.querySelector("#skResults");
+  let results = [], sel = 0;
+  const close = () => mask.remove();
+  mask.onclick = e => { if (e.target === mask) close(); };
+
+  function setSel(i) {
+    sel = i;
+    resultsEl.querySelectorAll(".sk-item").forEach((el, j) => el.classList.toggle("active", j === i));
+    const cur = resultsEl.querySelector(".sk-item.active"); if (cur) cur.scrollIntoView({ block: "nearest" });
+  }
+  function go(i) { const r = results[i]; if (!r) return; close(); location.hash = r.e.hash; }
+  function render() {
+    const q = input.value.trim().toLowerCase();
+    results = q ? searchIndex(idx, q) : [];
+    if (!q) { resultsEl.innerHTML = `<div class="sk-hint">输入关键词开始搜索 · 支持搜正文</div>`; return; }
+    if (!results.length) { resultsEl.innerHTML = `<div class="sk-hint">没有匹配的结果</div>`; return; }
+    resultsEl.innerHTML = results.map((r, i) => `<div class="sk-item ${i === 0 ? "active" : ""}" data-i="${i}">
+      <span class="sk-mod">${r.e.module}</span>
+      <div class="sk-main"><div class="sk-title">${_hl(r.e.title, q)}</div>
+      ${r.snippet ? `<div class="sk-snip">${_hl(r.snippet, q)}</div>` : (r.e.sub ? `<div class="sk-snip">${esc(r.e.sub)}</div>` : "")}</div></div>`).join("");
+    sel = 0;
+    resultsEl.querySelectorAll(".sk-item").forEach(el => { el.onmousemove = () => setSel(+el.dataset.i); el.onclick = () => go(+el.dataset.i); });
+  }
+  input.oninput = render;
+  input.onkeydown = e => {
+    if (e.key === "ArrowDown") { e.preventDefault(); if (results.length) setSel((sel + 1) % results.length); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); if (results.length) setSel((sel - 1 + results.length) % results.length); }
+    else if (e.key === "Enter") { e.preventDefault(); go(sel); }
+    else if (e.key === "Escape") { e.preventDefault(); close(); }
+  };
+  setTimeout(() => input.focus(), 30);
+}
+function initSearch() {
+  document.addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openSearch(); }
+  });
+  const btn = document.getElementById("searchBtn");
+  if (btn) btn.onclick = openSearch;
 }
 
 /* =========================================================
@@ -1045,5 +1108,6 @@ async function moduleInitialPull() {
   await pullResumeIndex();
 }
 
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initGlobalDnd);
-else initGlobalDnd();
+function initModulesUi() { initGlobalDnd(); initSearch(); }
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initModulesUi);
+else initModulesUi();
