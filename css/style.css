@@ -492,9 +492,43 @@ body.detail-mode .topnav { display: none; }
 /* ---------- 详情页 ---------- */
 /* 详情页时禁止整页滚动，让左右两栏各自独立滚动（仅桌面端）*/
 @media (min-width: 861px) { body.detail-mode { overflow: hidden; } }
-.detail { display: grid; grid-template-columns: 1fr 1fr; gap: 0; height: calc(100dvh - var(--topbar-h, 72px)); }
+.detail {
+  --detail-left: 50%;
+  display: grid;
+  grid-template-columns: minmax(280px, var(--detail-left)) 8px minmax(280px, 1fr);
+  gap: 0;
+  height: calc(100dvh - var(--topbar-h, 72px));
+}
 .pane { display: flex; flex-direction: column; min-width: 0; height: 100%; overflow: hidden; }
-.pane.left { border-right: 1px solid var(--line); background: var(--bg-soft); }
+.pane.left { background: var(--bg-soft); }
+.detail-resizer {
+  position: relative;
+  z-index: 4;
+  width: 8px;
+  cursor: col-resize;
+  background: linear-gradient(to right, var(--line-soft), transparent 1px, transparent 7px, var(--line-soft) 7px);
+  touch-action: none;
+}
+.detail-resizer::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 44px;
+  border-radius: 2px;
+  background: var(--line);
+  transform: translate(-50%, -50%);
+  transition: background .2s, height .2s;
+}
+.detail-resizer:hover::before,
+.detail-resizer:focus-visible::before,
+.detail.is-resizing .detail-resizer::before {
+  height: 64px;
+  background: var(--accent-soft);
+}
+.detail-resizer:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: -2px; }
+body.resizing-detail { cursor: col-resize; user-select: none; }
 .pane-head {
   display: flex; align-items: center; gap: 12px;
   padding: 14px clamp(16px, 3vw, 32px);
@@ -705,6 +739,7 @@ body.detail-mode .topnav { display: none; }
 /* ---------- 响应式 ---------- */
 @media (max-width: 860px) {
   .detail { grid-template-columns: 1fr; height: auto; }
+  .detail-resizer { display: none; }
   .pane { height: auto; overflow: visible; }
   .pane.left { border-right: 0; border-bottom: 1px solid var(--line); }
   .pane-body { max-height: none; }

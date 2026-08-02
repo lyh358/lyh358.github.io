@@ -292,6 +292,52 @@ function renderCustomDetail(cid) {
    通用双栏详情（题面 + 笔记），供手撕题库使用
    ========================================================= */
 let genDescTimer, genNoteTimer;
+function initDetailResizer() {
+  const detail = document.querySelector(".detail");
+  const grip = document.getElementById("detailResizer");
+  if (!detail || !grip) return;
+
+  const key = "leetweb:detail:leftPct";
+  const clamp = v => Math.max(25, Math.min(75, v));
+  const applyPct = pct => {
+    const next = clamp(pct);
+    detail.style.setProperty("--detail-left", next + "%");
+    localStorage.setItem(key, String(next));
+  };
+  const saved = parseFloat(localStorage.getItem(key));
+  if (!Number.isNaN(saved)) applyPct(saved);
+
+  const setFromClientX = x => {
+    const rect = detail.getBoundingClientRect();
+    if (!rect.width) return;
+    applyPct(((x - rect.left) / rect.width) * 100);
+  };
+
+  grip.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    detail.classList.add("is-resizing");
+    document.body.classList.add("resizing-detail");
+    setFromClientX(e.clientX);
+  });
+  grip.addEventListener("pointermove", e => {
+    if (!grip.hasPointerCapture(e.pointerId)) return;
+    setFromClientX(e.clientX);
+  });
+  function stopResize(e) {
+    if (grip.hasPointerCapture(e.pointerId)) grip.releasePointerCapture(e.pointerId);
+    detail.classList.remove("is-resizing");
+    document.body.classList.remove("resizing-detail");
+  }
+  grip.addEventListener("pointerup", stopResize);
+  grip.addEventListener("pointercancel", stopResize);
+  grip.addEventListener("keydown", e => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const current = parseFloat(getComputedStyle(detail).getPropertyValue("--detail-left")) || 50;
+    applyPct(current + (e.key === "ArrowRight" ? 2 : -2));
+  });
+}
 function renderEditorDetail(cfg) {
   document.body.classList.add("detail-mode");
   setTopbarVar();
@@ -330,6 +376,8 @@ function renderEditorDetail(cfg) {
       ${cfg.pdf ? `<input type="file" id="descPdfFile" accept="application/pdf,.pdf" hidden />` : ""}
     </div>
 
+    <div class="detail-resizer" id="detailResizer" role="separator" aria-label="调整题面与笔记比例" aria-orientation="vertical" tabindex="0"></div>
+
     <div class="pane right">
       <div class="pane-head">
         <span class="label note-label">${esc(cfg.noteLabel || "解法笔记")}</span>
@@ -351,6 +399,8 @@ function renderEditorDetail(cfg) {
       <input type="file" id="noteMdFile" accept=".md,.markdown,.txt" hidden />
     </div>
   </div></div>`;
+
+  initDetailResizer();
 
   function flash(el, text, base) { el.textContent = text; el.classList.add("show"); setTimeout(() => { el.classList.remove("show"); el.textContent = base; }, 1600); }
 
