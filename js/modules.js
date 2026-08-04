@@ -41,6 +41,76 @@ function toggleFullscreen(el) {
 }
 
 /* ---------- 通用输入弹窗 ---------- */
+function isMarkdownFile(file) {
+  return !!file && (/\.(md|markdown|txt)$/i.test(file.name || "") || /^text\//i.test(file.type || ""));
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result || "");
+    r.onerror = () => reject(r.error || new Error("read failed"));
+    r.readAsText(file);
+  });
+}
+
+async function importMarkdownFile(file, mde, persist, label) {
+  if (!isMarkdownFile(file)) { toast("请选择 Markdown 文档"); return false; }
+  if (mde.get().trim() && !confirm(`将覆盖当前${label}，继续？`)) return false;
+  const text = await readFileAsText(file);
+  mde.set(text);
+  mde.setMode("view");
+  await persist(true);
+  toast(`已导入 ${file.name}`);
+  return true;
+}
+
+function bindPaneMarkdownDrop(pane, mde, persist, label) {
+  if (!pane) return;
+  let depth = 0;
+  const hasFiles = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+  const clear = () => { depth = 0; pane.classList.remove("drop-target"); };
+  pane.addEventListener("dragenter", e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); e.stopPropagation();
+    depth++;
+    pane.classList.add("drop-target");
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+  pane.addEventListener("dragover", e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+  pane.addEventListener("dragleave", e => {
+    if (!hasFiles(e)) return;
+    e.stopPropagation();
+    depth--;
+    if (depth <= 0) clear();
+  });
+  pane.addEventListener("drop", async e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); e.stopPropagation();
+    clear();
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    try { await importMarkdownFile(file, mde, persist, label); }
+    catch (err) { toast("导入失败：" + err.message); }
+  });
+}
+
+function bindPaneFullscreen(pane, btn) {
+  if (!pane || !btn) return;
+  const paint = () => {
+    const on = document.fullscreenElement === pane || document.webkitFullscreenElement === pane;
+    btn.innerHTML = on ? ICON.compress : ICON.expand;
+    btn.classList.toggle("primary", on);
+  };
+  btn.onclick = () => toggleFullscreen(pane);
+  document.addEventListener("fullscreenchange", paint);
+  document.addEventListener("webkitfullscreenchange", paint);
+  paint();
+}
+
 function openPrompt(opts) {
   return new Promise(resolve => {
     const mask = document.createElement("div");
@@ -85,6 +155,26 @@ function renderHome() {
       <div class="home-seal">拾</div>
       <h1>拾遗</h1>
       <p class="home-tagline">缺者补之，散者拾之<br/>一处收纳算法与知识的笔记庭院</p>
+    </section>
+    <section class="hero-arsenal" aria-label="英雄素材">
+      <div class="hero-arsenal-main">
+        <img src="assets/ow-genji-hero.png" alt="忍者英雄主视觉" />
+        <div class="hero-arsenal-caption"><span>HERO FILE 01</span><strong>CYBER NINJA</strong><small>机动 · 近战 · 侦察</small></div>
+      </div>
+      <div class="hero-arsenal-side">
+        <article class="hero-slice hero-slice-dva">
+          <img src="assets/ow-dva-card.png" alt="D.Va 角色视觉" />
+          <div><span>MEKA PILOT</span><strong>D.VA</strong></div>
+        </article>
+        <article class="hero-slice hero-slice-roster">
+          <img src="assets/ow-roster-lounge.png" alt="英雄阵容大厅" />
+          <div><span>ROSTER // READY</span><strong>TEAM ASSEMBLY</strong></div>
+        </article>
+      </div>
+      <div class="hero-portrait" title="英雄头像">
+        <img src="assets/ow-genji-avatar.png" alt="忍者英雄头像" />
+        <span>LV. 76</span>
+      </div>
     </section>
     <div class="module-grid">
       <a class="module-card" href="#/hot100">
@@ -132,8 +222,8 @@ const CustomStore = {
   list() { try { return JSON.parse(localStorage.getItem(this.KEY) || "[]"); } catch (e) { return []; } },
   save(arr) { localStorage.setItem(this.KEY, JSON.stringify(arr)); },
   get(id) { return this.list().find(x => x.id === id); },
-  add(title, type) { const arr = this.list(); const it = { id: uid(), title, type: type || "未分类", created: Date.now() }; arr.push(it); this.save(arr); return it; },
-  update(id, patch) { const arr = this.list(); const i = arr.findIndex(x => x.id === id); if (i >= 0) { arr[i] = Object.assign(arr[i], patch); this.save(arr); } },
+  add(title, type) { const arr = this.list(); const it = { id: uid(), title, type: normalizeCustomType(type), created: Date.now() }; arr.push(it); this.save(arr); return it; },
+  update(id, patch) { const arr = this.list(); const i = arr.findIndex(x => x.id === id); if (i >= 0) { if (patch && Object.prototype.hasOwnProperty.call(patch, "type")) patch.type = normalizeCustomType(patch.type); arr[i] = Object.assign(arr[i], patch); this.save(arr); } },
   remove(id) { this.save(this.list().filter(x => x.id !== id)); localStorage.removeItem("leetweb:custom:desc:" + id); localStorage.removeItem("leetweb:custom:note:" + id); },
   getDesc(id) { return localStorage.getItem("leetweb:custom:desc:" + id) || ""; },
   setDesc(id, md) { md && md.trim() ? localStorage.setItem("leetweb:custom:desc:" + id, md) : localStorage.removeItem("leetweb:custom:desc:" + id); },
@@ -143,6 +233,36 @@ const CustomStore = {
 const cDescPath = id => `custom/${id}-desc.md`;
 const cNotePath = id => `custom/${id}-note.md`;
 const cPdfPath  = id => `custom/${id}-desc.pdf`;
+
+function customTypeParts(type) {
+  return String(type || "")
+    .replace(/[，、；;|/\\]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean);
+}
+
+function normalizeCustomType(type) {
+  const parts = customTypeParts(type);
+  return parts.length ? [...new Set(parts)].join(" ") : "未分类";
+}
+
+function customTypeKey(type) {
+  const parts = [...new Set(customTypeParts(type).map(x => x.toLowerCase()))].sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
+  return parts.length ? parts.join("\u0001") : "未分类";
+}
+
+function groupCustomItems(items) {
+  const groups = new Map();
+  items.forEach(it => {
+    const label = normalizeCustomType(it.type);
+    const key = customTypeKey(label);
+    if (!groups.has(key)) groups.set(key, { label, items: [] });
+    groups.get(key).items.push(it);
+  });
+  return [...groups.values()];
+}
 
 async function syncCustomIndex() {
   await trySync("customindex", "手撕题库目录", () => Sync.writeText("custom/index.json", JSON.stringify(CustomStore.list(), null, 2), "update custom index"));
@@ -156,15 +276,15 @@ function renderCustomList() {
   document.body.classList.remove("detail-mode");
   setNav("custom");
   const items = CustomStore.list().sort((a, b) => b.created - a.created);
-  const types = [...new Set(items.map(i => i.type || "未分类"))];
+  const groups = groupCustomItems(items);
   let listHtml = "";
   if (!items.length) {
     listHtml = `<div class="kb-empty"><span class="brush">撕</span><p>还没有手撕题。点击右上「＋ 新建题目」开始收录。</p></div>`;
   } else {
-    types.forEach(t => {
-      const group = items.filter(i => (i.type || "未分类") === t);
+    groups.forEach(g => {
+      const group = g.items;
       listHtml += `<section class="category">
-        <div class="category-head"><h2>${esc(t)}</h2><span class="count">${group.length} 题</span></div>
+        <div class="category-head"><h2>${esc(g.label)}</h2><span class="count">${group.length} 题</span></div>
         <div class="problem-grid">${group.map(customCard).join("")}</div>
       </section>`;
     });
@@ -199,11 +319,12 @@ function renderCustomList() {
 
 function customCard(it) {
   const noted = !!CustomStore.getNote(it.id).trim();
+  const type = normalizeCustomType(it.type);
   return `<div class="problem-card" data-id="${it.id}">
     <span class="pc-id">撕</span>
     <div class="pc-body">
       <div class="pc-title">${esc(it.title)}</div>
-      <div class="pc-meta"><span class="diff" style="color:var(--ink-faint)">${esc(it.type || "未分类")}</span></div>
+      <div class="pc-meta"><span class="diff" style="color:var(--ink-faint)">${esc(type)}</span></div>
     </div>
     <div class="pc-icons">
       ${noted ? `<span class="note-on" title="已有解法">${ICON.note}</span>` : ""}
@@ -246,12 +367,13 @@ function renderCustomDetail(cid) {
   const it = CustomStore.get(cid);
   if (!it) { location.hash = "#/custom"; return; }
   setNav("custom");
+  const type = normalizeCustomType(it.type);
   renderEditorDetail({
     backHref: "#/custom",
     key: "c" + cid,
-    eyebrow: "手撕 · " + (it.type || "未分类"),
+    eyebrow: "手撕 · " + type,
     title: it.title,
-    tags: [{ text: it.type || "未分类" }],
+    tags: [{ text: type }],
     onEditInfo: async () => {
       const v = await openPrompt({
         title: "编辑题目信息",
@@ -402,6 +524,23 @@ function renderEditorDetail(cfg) {
 
   initDetailResizer();
 
+  const leftPane = document.querySelector(".pane.left");
+  const rightPane = document.querySelector(".pane.right");
+  function addPaneFullButton(pane, hintId, title) {
+    const hint = document.getElementById(hintId);
+    if (!pane || !hint) return null;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn pane-full";
+    btn.title = title;
+    btn.innerHTML = ICON.expand;
+    hint.parentNode.insertBefore(btn, hint);
+    bindPaneFullscreen(pane, btn);
+    return btn;
+  }
+  addPaneFullButton(leftPane, "descHint", "左栏全屏");
+  addPaneFullButton(rightPane, "noteHint", "右栏全屏");
+
   function flash(el, text, base) { el.textContent = text; el.classList.add("show"); setTimeout(() => { el.classList.remove("show"); el.textContent = base; }, 1600); }
 
   /* ---- 左：题面 ---- */
@@ -438,6 +577,13 @@ function renderEditorDetail(cfg) {
     r.onload = () => { if (descMde.get().trim() && !confirm("将覆盖当前题面，继续？")) { descMdFile.value = ""; return; } descMde.set(r.result); descMde.setMode("view"); persistDesc(true); toast(`已导入 ${f.name}`); descMdFile.value = ""; };
     r.readAsText(f);
   };
+  descMdFile.onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { await importMarkdownFile(f, descMde, persistDesc, "题面"); }
+    catch (err) { toast("导入失败：" + err.message); }
+    descMdFile.value = "";
+  };
+  bindPaneMarkdownDrop(leftPane, descMde, persistDesc, "题面");
 
   /* ---- PDF ---- */
   if (cfg.pdf) {
@@ -523,6 +669,13 @@ function renderEditorDetail(cfg) {
     r.onload = () => { if (noteMde.get().trim() && !confirm("将覆盖当前笔记，继续？")) { noteMdFile.value = ""; return; } noteMde.set(r.result); persistNote(true); toast(`已导入 ${f.name}`); noteMdFile.value = ""; };
     r.readAsText(f);
   };
+  noteMdFile.onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { await importMarkdownFile(f, noteMde, persistNote, "笔记"); }
+    catch (err) { toast("导入失败：" + err.message); }
+    noteMdFile.value = "";
+  };
+  bindPaneMarkdownDrop(rightPane, noteMde, persistNote, "笔记");
   document.getElementById("dlNoteMd").onclick = () => {
     const blob = new Blob([noteMde.get()], { type: "text/markdown;charset=utf-8" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = cfg.note.downloadName || "note.md"; a.click(); URL.revokeObjectURL(a.href);

@@ -25,21 +25,77 @@ const ICON = {
   expand:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3"/></svg>',
   compress:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3m8 0v-3a2 2 0 0 1 2-2h3"/></svg>',
   bulb:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z"/></svg>',
+  palette:   '<path d="M12 3a9 9 0 0 0 0 18h1.1a1.9 1.9 0 0 0 1.3-3.2 1.2 1.2 0 0 1 .8-2h1.3A4.5 4.5 0 0 0 21 11.3C21 6.7 17 3 12 3z"/><circle cx="7.8" cy="11" r="1"/><circle cx="10" cy="7.8" r="1"/><circle cx="14.1" cy="7.8" r="1"/><circle cx="16.3" cy="11" r="1"/>',
 };
 
 /* ---------- 主题 ---------- */
+const THEMES = [
+  { id: "light", name: "素纸", tone: "light" },
+  { id: "dark", name: "夜墨", tone: "dark" },
+  { id: "pixel", name: "像素", tone: "light" },
+  { id: "cosmos", name: "宇宙", tone: "dark" },
+  { id: "orbital", name: "航天", tone: "dark" },
+  { id: "hero", name: "英雄竞技", tone: "light" },
+  { id: "arena", name: "峡谷", tone: "dark" },
+  { id: "battlefield", name: "战地", tone: "dark" },
+  { id: "cyberpunk", name: "赛博朋克", tone: "dark" },
+];
+function getThemeInfo(id) {
+  return THEMES.find(t => t.id === id) || THEMES[0];
+}
+function isDarkTheme(id) {
+  return getThemeInfo(id).tone === "dark";
+}
 function applyTheme(t) {
+  if (!THEMES.some(x => x.id === t)) t = "light";
+  const info = getThemeInfo(t);
   document.documentElement.setAttribute("data-theme", t);
-  document.getElementById("themeIcon").innerHTML = t === "dark" ? ICON.sun : ICON.moon;
+  const icon = document.getElementById("themeIcon");
+  const btn = document.getElementById("themeBtn");
+  if (icon) icon.innerHTML = ICON.palette;
+  if (btn) btn.title = "主题：" + info.name;
   syncHljsTheme(t);
+}
+function openThemeMenu() {
+  const old = document.querySelector(".theme-menu");
+  if (old) { old.remove(); return; }
+  const btn = document.getElementById("themeBtn");
+  if (!btn) return;
+  const current = document.documentElement.getAttribute("data-theme") || "light";
+  const menu = document.createElement("div");
+  menu.className = "theme-menu";
+  menu.innerHTML = THEMES.map(t => `
+    <button type="button" class="theme-choice ${t.id === current ? "active" : ""}" data-theme="${t.id}">
+      <span class="theme-swatch" data-theme-swatch="${t.id}"></span>
+      <span>${t.name}</span>
+    </button>`).join("");
+  document.body.appendChild(menu);
+  const rect = btn.getBoundingClientRect();
+  menu.style.top = `${rect.bottom + 10}px`;
+  menu.style.right = `${Math.max(12, window.innerWidth - rect.right)}px`;
+  menu.querySelectorAll(".theme-choice").forEach(choice => {
+    choice.onclick = () => {
+      const next = choice.dataset.theme;
+      Store.setTheme(next);
+      applyTheme(next);
+      menu.remove();
+      toast("已切换主题：" + getThemeInfo(next).name);
+    };
+  });
+  setTimeout(() => {
+    const close = e => {
+      if (!menu.contains(e.target) && !btn.contains(e.target)) {
+        menu.remove();
+        document.removeEventListener("pointerdown", close);
+      }
+    };
+    document.addEventListener("pointerdown", close);
+  }, 0);
 }
 function initTheme() {
   const t = Store.getTheme();
   applyTheme(t);
-  document.getElementById("themeBtn").onclick = () => {
-    const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
-    Store.setTheme(next); applyTheme(next);
-  };
+  document.getElementById("themeBtn").onclick = openThemeMenu;
 }
 
 /* ---------- 布局：测量顶栏高度，保证详情页左右独立滚动 ---------- */
@@ -252,8 +308,9 @@ function renderMarkdownInto(el, md) {
 function syncHljsTheme(t) {
   const light = document.getElementById("hljsLight");
   const dark = document.getElementById("hljsDark");
-  if (light) light.disabled = (t === "dark");
-  if (dark) dark.disabled = (t !== "dark");
+  const darkMode = isDarkTheme(t);
+  if (light) light.disabled = darkMode;
+  if (dark) dark.disabled = !darkMode;
 }
 
 /* =========================================================
