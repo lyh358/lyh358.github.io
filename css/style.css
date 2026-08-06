@@ -933,11 +933,73 @@ html[data-theme="pixel"] .detail-resizer::before { background: #d19a32; }
 .diff.d1 { color: var(--easy); }
 .diff.d2 { color: var(--medium); }
 .diff.d3 { color: var(--hard); }
+.difficulty-mark {
+  --diff-color: var(--ink-faint);
+  --diff-bg: color-mix(in srgb, var(--diff-color) 13%, var(--surface));
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 78px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--diff-color) 42%, var(--line-soft));
+  border-radius: 7px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--diff-color) 18%, transparent), transparent 64%),
+    var(--diff-bg);
+  color: var(--diff-color);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  line-height: 1;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 30%, transparent);
+}
+.difficulty-mark.d1 { --diff-color: #2f80ed; }
+.difficulty-mark.d2 { --diff-color: #d99a16; }
+.difficulty-mark.d3 { --diff-color: #d94b3d; }
+.difficulty-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 3px;
+  width: 19px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.difficulty-bars i {
+  display: block;
+  width: 4px;
+  border-radius: 4px 4px 2px 2px;
+  background: currentColor;
+  box-shadow: 0 0 8px color-mix(in srgb, currentColor 38%, transparent);
+}
+.difficulty-bars i:nth-child(1) { height: 8px; opacity: .46; }
+.difficulty-bars i:nth-child(2) { height: 13px; opacity: .7; }
+.difficulty-bars i:nth-child(3) { height: 18px; opacity: .95; }
+.difficulty-mark.d1 .difficulty-bars i:nth-child(1),
+.difficulty-mark.d2 .difficulty-bars i:nth-child(-n+2) {
+  opacity: .95;
+}
+.difficulty-mark.d1 .difficulty-bars i:nth-child(n+2),
+.difficulty-mark.d2 .difficulty-bars i:nth-child(3) {
+  opacity: .22;
+}
 .pc-icons { display: flex; align-items: center; gap: 7px; flex-shrink: 0; color: var(--ink-faint); }
 .pc-icons .on { color: var(--gold); }
 .pc-icons .note-on { color: var(--accent); }
 .pc-icons .review-mark { color: var(--medium); filter: drop-shadow(0 0 3px color-mix(in srgb, var(--medium) 55%, transparent)); }
 .pc-icons svg { width: 15px; height: 15px; display: block; }
+
+@media (max-width: 420px) {
+  .problem-card { gap: 10px; padding-right: 12px; }
+  .difficulty-mark {
+    min-width: 40px;
+    width: 40px;
+    padding: 0;
+    justify-content: center;
+  }
+  .difficulty-mark > span:last-child { display: none; }
+}
 
 .badge-star { font-size: 13px; }
 

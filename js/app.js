@@ -455,6 +455,10 @@ function cardHtml(p) {
           <span class="diff d${p.diff}">${DIFF_TEXT[p.diff]}</span>
         </div>
       </div>
+      <span class="difficulty-mark d${p.diff}" title="${DIFF_TEXT[p.diff]}">
+        <span class="difficulty-bars" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>${DIFF_TEXT[p.diff]}</span>
+      </span>
       <div class="pc-icons">
         ${Store.getStatus(p.id) === 2 ? `<span class="review-mark" title="待复习">${ICON.bulb}</span>` : ""}
         ${noted ? `<span class="note-on" title="已有笔记">${ICON.note}</span>` : ""}
